@@ -284,66 +284,137 @@ export function CoralToggle({
   onToggle: () => void;
 }) {
   const active = mode === "coral";
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="inline-flex items-center gap-2 outline-none transition-opacity"
-      style={{
-        background: "transparent",
-        border: "none",
-        cursor: "pointer",
-        padding: "4px 8px 4px 4px",
-        borderRadius: 4,
-      }}
-      title={
-        active
-          ? "Coral SQL view is on - click to return to the prettified summary"
-          : "Show the raw Coral SQL the agent is running"
+  // Suppress the first-time hint after the operator clicks Coral once.
+  // localStorage keeps that suppression sticky across navigations + cases,
+  // so the nudge only appears for users who haven't discovered the panel.
+  const [seen, setSeen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(CORAL_HINT_KEY) === "1";
+  });
+  const showHint = !active && !seen;
+
+  function handleClick() {
+    if (!seen) {
+      try {
+        window.localStorage.setItem(CORAL_HINT_KEY, "1");
+      } catch {
+        /* private mode etc - just ignore */
       }
-      aria-pressed={active}
-    >
-      <span
-        className="inline-flex items-center justify-center transition-all"
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: 4,
-          background: active ? "var(--color-accent-soft)" : "var(--color-rule-soft)",
-          border: active
-            ? "1px solid var(--color-accent-line)"
-            : "1px solid var(--color-rule-soft)",
-        }}
-      >
-        <img
-          src="/coral-button.png"
-          alt=""
-          width={18}
-          height={18}
+      setSeen(true);
+    }
+    onToggle();
+  }
+
+  return (
+    <div className="inline-flex items-center" style={{ gap: 10 }}>
+      {showHint && (
+        <span
+          className="inline-flex items-center select-none"
           style={{
-            opacity: active ? 1 : 0.62,
-            filter: active
-              ? "drop-shadow(0 0 6px var(--color-accent-line))"
-              : "none",
-            transition: "opacity 200ms ease, filter 200ms ease",
+            gap: 6,
+            fontFamily: "Spectral, serif",
+            fontStyle: "italic",
+            fontSize: 12.5,
+            color: "var(--color-accent, #56cf83)",
+            letterSpacing: "-0.003em",
+            animation: "coral-hint-breathe 2.6s ease-in-out infinite",
           }}
-        />
-      </span>
-      <span
-        className="text-[11px] uppercase tabular-nums"
+          aria-hidden
+        >
+          watch the queries
+          <span style={{ fontSize: 13, lineHeight: 1 }}>→</span>
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={handleClick}
+        className="relative inline-flex items-center gap-2 outline-none transition-opacity"
         style={{
-          color: active
-            ? "var(--color-accent, #56cf83)"
-            : "var(--color-ink-faint)",
-          letterSpacing: "0.18em",
-          fontWeight: 500,
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          padding: "4px 8px 4px 4px",
+          borderRadius: 4,
         }}
+        title={
+          active
+            ? "Coral SQL view is on - click to return to the prettified summary"
+            : "Show the raw Coral SQL the agent is running"
+        }
+        aria-pressed={active}
       >
-        coral
-      </span>
-    </button>
+        {showHint && (
+          <span
+            aria-hidden
+            className="absolute pointer-events-none"
+            style={{
+              left: 0,
+              top: 0,
+              width: 34,
+              height: 34,
+              borderRadius: 6,
+              animation: "coral-hint-pulse 1.8s ease-out infinite",
+            }}
+          />
+        )}
+        <span
+          className="inline-flex items-center justify-center transition-all"
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 4,
+            background: active ? "var(--color-accent-soft)" : "var(--color-rule-soft)",
+            border: active
+              ? "1px solid var(--color-accent-line)"
+              : showHint
+                ? "1px solid var(--color-accent-line)"
+                : "1px solid var(--color-rule-soft)",
+          }}
+        >
+          <img
+            src="/coral-button.png"
+            alt=""
+            width={18}
+            height={18}
+            style={{
+              opacity: active ? 1 : showHint ? 0.92 : 0.62,
+              filter: active || showHint
+                ? "drop-shadow(0 0 6px var(--color-accent-line))"
+                : "none",
+              transition: "opacity 200ms ease, filter 200ms ease",
+            }}
+          />
+        </span>
+        <span
+          className="text-[11px] uppercase tabular-nums"
+          style={{
+            color: active
+              ? "var(--color-accent, #56cf83)"
+              : showHint
+                ? "var(--color-accent, #56cf83)"
+                : "var(--color-ink-faint)",
+            letterSpacing: "0.18em",
+            fontWeight: 500,
+          }}
+        >
+          coral
+        </span>
+      </button>
+      <style>{`
+        @keyframes coral-hint-pulse {
+          0%   { box-shadow: 0 0 0 0 var(--color-accent-line, rgba(86,207,131,0.55)); opacity: 1; }
+          100% { box-shadow: 0 0 0 12px rgba(86,207,131,0); opacity: 0; }
+        }
+        @keyframes coral-hint-breathe {
+          0%, 100% { opacity: 0.55; transform: translateX(0); }
+          50%      { opacity: 1;    transform: translateX(2px); }
+        }
+      `}</style>
+    </div>
   );
 }
+
+const CORAL_HINT_KEY = "manthan:coral-hint-seen";
 
 // ──────────────────────────────────────────────────────────────────────
 // Canvas - landing's InvestigatingCanvas layout, wired to live events.
