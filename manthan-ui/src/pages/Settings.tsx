@@ -3,9 +3,6 @@
  *
  * Only renders information that's actually real:
  *   - Workspace · team       → /api/me
- *   - Model runtime          → the env vars baked into the API + agent
- *     (MANTHAN_MODEL for the agent, MANTHAN_PRETTIFIER_MODEL /
- *     MANTHAN_CHAT_MODEL / MANTHAN_CITATION_MODEL for the workers).
  *
  * Everything else (billing, compliance certifications, policy
  * thresholds, notification channels) is honestly labelled DEMO MODE -
@@ -20,28 +17,6 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { getMe, type MeResponse } from "@/lib/api";
-
-// ──────────────────────────────────────────────────────────────────────
-// Model runtime - mirrors what's actually configured in the running
-// stack (agent/.env + manthan-api/.env). When a real /api/runtime
-// endpoint lands later, swap this constant for a live fetch.
-//
-//   Investigator + Chat agent: x-ai/grok-build-0.1 - coding-tuned
-//     grok, the model that can drive Coral SQL tool calls cleanly.
-//     Same model for both because the chat loop reuses the same tools.
-//
-//   Prettifier + Citation reasoning: google/gemini-3.1-flash-lite -
-//     a small fast model is the right tool for one-line summaries and
-//     2-sentence explanations.
-// ──────────────────────────────────────────────────────────────────────
-
-const MODEL_RUNTIME = {
-  agent: "x-ai/grok-build-0.1",
-  chat: "x-ai/grok-build-0.1",
-  prettifier: "google/gemini-3.1-flash-lite",
-  citationReasoning: "google/gemini-3.1-flash-lite",
-  provider: "OpenRouter",
-};
 
 // ──────────────────────────────────────────────────────────────────────
 // Page
@@ -80,7 +55,6 @@ export default function Settings() {
         <div className="mt-10 flex flex-col gap-9">
           <WorkspaceCard me={me} />
           <TeamCard me={me} />
-          <ModelRuntimeCard />
           <DemoCard />
         </div>
       </div>
@@ -122,9 +96,9 @@ function PageHeader() {
           letterSpacing: "-0.003em",
         }}
       >
-        Identity, team, and the agent runtime. Billing, compliance, and
-        notification channels are wired in production - this build runs
-        them in demo mode.
+        Identity and team. Billing, compliance, and notification
+        channels are wired in production - this build runs them in
+        demo mode.
       </p>
     </header>
   );
@@ -375,57 +349,6 @@ function TeamCard({ me }: { me: MeResponse | null }) {
         label="Member id"
         value={placeholder ? "…" : me.member.id}
         mono
-      />
-    </Card>
-  );
-}
-
-function ModelRuntimeCard() {
-  return (
-    <Card
-      eyebrow="Agent runtime"
-      trailing={
-        <span
-          className="text-[11.5px] uppercase"
-          style={{
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            color: "var(--color-accent)",
-            letterSpacing: "0.22em",
-            fontWeight: 500,
-          }}
-        >
-          Live
-        </span>
-      }
-    >
-      <Row
-        label="Investigator"
-        value={MODEL_RUNTIME.agent}
-        hint="The model that drafts the brief, calls Coral tools, and concludes. Coding-tuned Grok - same model the chat loop reuses. Set via MANTHAN_MODEL on the agent."
-        mono
-      />
-      <Row
-        label="Chat agent"
-        value={MODEL_RUNTIME.chat}
-        hint="Handles operator follow-ups on closed and awaiting-nod cases. Same caliber as the investigator because it gets the same tool surface - Coral SQL, record_finding, amend_brief. Set via MANTHAN_CHAT_MODEL."
-        mono
-      />
-      <Row
-        label="Prettifier"
-        value={MODEL_RUNTIME.prettifier}
-        hint="Writes the one-line event summaries you see in the investigation feed. Small fast model - the right tool for one-liners. Set via MANTHAN_PRETTIFIER_MODEL."
-        mono
-      />
-      <Row
-        label="Citation reasoning"
-        value={MODEL_RUNTIME.citationReasoning}
-        hint="Writes the 2-sentence per-citation explanations when you click a chip. Same small fast model. Set via MANTHAN_CITATION_MODEL."
-        mono
-      />
-      <Row
-        label="Provider"
-        value={MODEL_RUNTIME.provider}
-        hint="Routes every LLM call. API key read from OPENROUTER_API_KEY on the server."
       />
     </Card>
   );
