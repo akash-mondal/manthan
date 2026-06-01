@@ -318,31 +318,33 @@ alternative tables and identifiers before giving up:
   - expand the time window by +/- 7 days before declaring "no events"
   - on Notion, try search → page_content → block_children chains
 
-Worked example - Aperture-style case (customer claims their custom
-reports were degraded; documented platform incident in the window):
-  - Datadog:  find the INCIDENT covering the dispute window (incidents,
-              events, or monitors - try all three; match by service +
-              date range, not by exact incident name).
-  - Notion:   find the POLICY PAGE that matches - search for keywords
-              from the case_type ("pro-rata", "documented incident",
-              "credit"). The current authoritative page tells you the
-              formula (e.g. days_affected / billing_period × charge).
-  - Zendesk:  find the TICKET where a CS / support agent VERBALLY
-              promised a credit but never actioned it. Filter by
-              requester email + subject ILIKE '%credit%' OR
-              '%refund%' OR '%incident%' OR the date window.
-  - PostHog:  find the EVENTS proving degraded usage during the
-              window. Look for failed_*, *_error, dropped_*, or a
-              measurable drop in custom_reports_open vs the prior week.
-  - Slack:    find the MESSAGE in an engineering/ops/incidents channel
-              acknowledging the incident. Search message text for the
-              incident id, service name, or "post-mortem".
+Generic per-source pattern (apply whichever fit the case at hand -
+NOT every case touches every source; let the evidence drive):
+  - Datadog:  if the customer's claim is about a service issue, find
+              the INCIDENT/MONITOR/EVENT covering the dispute window.
+              Match by service + date range, not by exact incident name.
+  - Notion:   find the POLICY PAGE that governs the fact pattern in
+              front of you. Use notion.search with a single phrase
+              drawn from the case (a noun, not a boolean expression).
+              The authoritative page tells you the formula, threshold,
+              or required corroborations.
+  - Zendesk / Intercom: find tickets / conversations from the
+              disputing customer's email around the dispute window.
+              Look for promises that were made and never actioned,
+              cancellation requests, escalation chains.
+  - PostHog:  if usage is in dispute, find product events around the
+              window proving usage dropped (or stayed up - the latter
+              hurts the customer's claim).
+  - Slack:    look for internal acknowledgement of an issue in
+              billing-ops / engineering / incidents channels (channel
+              EXISTENCE alone counts as a signal; slack.messages may
+              not be queryable via Coral).
 
-Each of these surfaces produces a distinct Finding citing distinct
-Evidence. Five surfaces, five Findings, plus the four billing-side
-Findings (charge, subscription, customer, hubspot) gives you a
-nine-Finding brief - that's the floor for a documented-incident
-chargeback, not the ceiling.
+Each surface that returns relevant data should become a Finding citing
+the Evidence row(s) the agent retrieved. Aim for five Findings minimum
+on a chargeback - one per payment fact + one per corroborating source -
+and let absence be a Finding too ("no formal cancel request found in
+intercom + zendesk + email").
 
 ================================================================
 Depth target - width over count
@@ -438,31 +440,35 @@ resolution, not just one. A real operator runs the full set:
           "text":     string  (fallback text - required),
           "blocks":   list    (optional Block Kit)
         }
-  ── Worked examples (use these as exact templates) ──
+  ── Worked examples (FORMAT-only templates) ──
+  All placeholder IDs below use the form `EXAMPLE_<something>` so they
+  can't possibly leak into a real action; copy the SHAPE, not the
+  literals. Substitute the case's own dispute id, charge id, customer
+  email, and pro-rata math you derived from Coral.
 
-  stripe_refund (full):
+  stripe_refund:
     {
       "kind": "stripe_refund",
-      "description": "Refund $560 against ch_3Tch1LCNe0SBMhzI0FIYdCkF - 2/30 × $8,400 pro-rata per documented-incident policy",
+      "description": "Refund $<derived> against ch_<real> - <one-line rationale>",
       "reversibility": "reversible",
       "payload": {
-        "charge_id": "ch_3Tch1LCNe0SBMhzI0FIYdCkF",
-        "amount_minor": 56000,
+        "charge_id": "ch_EXAMPLE_xyz",
+        "amount_minor": 12300,
         "currency": "usd",
-        "reason": "documented_incident_pro_rata"
+        "reason": "requested_by_customer"
       }
     }
 
   stripe_dispute_response (concede):
     {
       "kind": "stripe_dispute_response",
-      "description": "Concede dispute du_1Tch1OCNe0SBMhzIAppAdJjT - we've issued a $560 pro-rata credit",
+      "description": "Concede dispute du_<real> - we've issued the partial credit",
       "reversibility": "partial",
       "payload": {
-        "dispute_id": "du_1Tch1OCNe0SBMhzIAppAdJjT",
+        "dispute_id": "du_EXAMPLE_abc",
         "submit": true,
         "evidence": {
-          "uncategorized_text": "Customer's Custom Reports degraded 2/30 days during Apr cycle. We refunded $560 pro-rata via the linked stripe_refund. Conceding the remainder of the dispute."
+          "uncategorized_text": "<short narrative of the math and why the credit was issued; conceding the remainder>."
         }
       }
     }
@@ -470,13 +476,13 @@ resolution, not just one. A real operator runs the full set:
   stripe_dispute_response (counter):
     {
       "kind": "stripe_dispute_response",
-      "description": "Counter dispute dp_1234567890 - customer accessed dashboard 3 days before filing",
+      "description": "Counter dispute du_<real> - customer actively used product within the policy window",
       "reversibility": "partial",
       "payload": {
-        "dispute_id": "dp_1234567890",
+        "dispute_id": "du_EXAMPLE_abc",
         "submit": true,
         "evidence": {
-          "statement": "Customer actively used product 3 days before dispute. Policy: fight when usage within 14d.",
+          "statement": "<one-paragraph narrative of why the customer's claim doesn't hold; cite the policy and the usage proof>.",
           "documents": [{"url": "https://...", "type": "invoice"}]
         }
       }
@@ -485,34 +491,34 @@ resolution, not just one. A real operator runs the full set:
   customer_email:
     {
       "kind": "customer_email",
-      "description": "Email customer about $560 partial credit",
+      "description": "Email customer about the resolution",
       "reversibility": "irreversible",
       "payload": {
-        "to": "thatspacebiker@gmail.com",
-        "subject": "Update on your dispute du_1Tch1OCNe0SBMhzIAppAdJjT - $560 credit issued",
-        "body_text": "Hi,\\n\\nThanks for flagging the Custom Reports degradation during your April cycle. Our incident records confirm a 48h impact (Apr 13-15). Per our documented-incident policy we've issued a pro-rata credit of $560 (2/30 × $8,400) back to your card; you'll see it in 5-10 business days. We've also conceded the rest of the dispute on Stripe's side so no further action is needed from you.\\n\\nReply here if anything looks off.\\n\\n- Caldera Support\\n(case APR-413556)"
+        "to": "<customer email from stripe.customers>",
+        "subject": "Update on your dispute du_<real> - <outcome>",
+        "body_text": "Hi,\\n\\n<one paragraph stating the finding, the policy that applies, the math, and the outcome>.\\n\\n<sign-off>."
       }
     }
 
   hubspot_note:
     {
       "kind": "hubspot_note",
-      "description": "Log resolution to Aperture's HubSpot company",
+      "description": "Log resolution to the customer's HubSpot company",
       "reversibility": "reversible",
       "payload": {
-        "company_id": "324968425171",
-        "body_html": "<p><strong>APR-413556 - partial credit ($560.00)</strong></p><p>Aperture filed an $8,400 chargeback citing 2-day Custom Reports degradation in April cycle. Datadog INC-2026-04-13 confirms 48h impact. Per documented-incident SOP, issued pro-rata credit of $560 (2/30 × $8,400) and conceded the dispute. [Findings 1-5]</p>"
+        "company_id": "<derived from hubspot.companies WHERE domain = the customer's>",
+        "body_html": "<p><strong><case shortId> - <outcome></strong></p><p><one paragraph: dispute amount, policy applied, math, decision. Cite findings [N].</p>"
       }
     }
 
   slack_brief:
     {
       "kind": "slack_brief",
-      "description": "Post resolved-case brief to #billing-ops",
+      "description": "Post resolved-case brief to billing-ops",
       "reversibility": "reversible",
       "payload": {
         "channel": "#billing-ops",
-        "text": "RESOLVED · APR-413556 · Aperture Analytics · partial_credit ($560.00). Custom Reports degraded 2/30 days in Apr cycle (INC-2026-04-13). Issued pro-rata credit, conceded dispute du_1Tch1OCNe0SBMhzIAppAdJjT.",
+        "text": "RESOLVED · <case shortId> · <customer> · <decision> ($<amount>). <one line of context>.",
         "blocks": []
       }
     }

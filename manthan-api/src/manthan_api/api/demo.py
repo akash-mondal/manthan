@@ -88,52 +88,30 @@ SCENARIOS = {
         "customer_ref": "Aperture Analytics",
         "amount_minor": 840000,
         "currency": "usd",
-        # Trigger text spells out the W7R hook the agent must follow:
-        # documented 48h Custom Reports degradation against a 30-day
-        # Premium cycle → pro-rata partial credit (not full refund, not
-        # fight). The IDs below match the resources seeded by
-        # agent/scripts/patch_w7r_aperture_prorata.py - re-run that
-        # script first if the state file is stale or wiped.
+        # Trigger text is intentionally MINIMAL - the raw signal a real
+        # Stripe webhook would carry. The agent has to derive everything
+        # (customer, window, claim, applicable policy, math) from the
+        # actual upstream sources via Coral. No editorializing here,
+        # no expected-answer hints, no list of which sources to query.
         "trigger_text": (
-            "Stripe chargeback opened: Aperture Analytics filed an $8,400 dispute "
-            "on charge ch_3Tch1LCNe0SBMhzI0FIYdCkF (dispute du_1Tch1OCNe0SBMhzIAppAdJjT). "
-            "Reason: product_not_as_described - customer claims Custom Reports was "
-            "degraded for ~2 days during their April Premium cycle "
-            "(2026-04-12 → 2026-05-11). Investigate across the 8 connected systems "
-            "(Stripe, HubSpot, Intercom, Zendesk, Slack, Notion, PostHog, Datadog) "
-            "and recommend fight, full refund, or partial credit with the math."
+            "Stripe chargeback opened on charge ch_3Tch1LCNe0SBMhzI0FIYdCkF "
+            "(dispute du_1Tch1OCNe0SBMhzIAppAdJjT). Amount $8,400 USD. "
+            "Reason: product_not_as_described."
         ),
         "trigger_payload": {
             "event_id": "evt_demo_aperture",
             "event_type": "charge.dispute.created",
-            # Pre-resolved identifiers the action-enrichment loop needs
-            # in order to fully hydrate drafted action payloads. Without
-            # these, hubspot_note ships with empty company_id and fails
-            # at adapter time.
-            "hubspot_company_id": "324974146247",
             "event_object": {
+                # Exactly the shape a real Stripe charge.dispute.created
+                # webhook carries. No internal workflow tags, no policy
+                # hints, no expected-amount fields - those would be
+                # cheating; the agent has to discover them through Coral.
                 "id": "du_1Tch1OCNe0SBMhzIAppAdJjT",
                 "amount": 840000,
                 "currency": "usd",
                 "reason": "product_not_as_described",
                 "charge": "ch_3Tch1LCNe0SBMhzI0FIYdCkF",
                 "customer": "cus_UbupgHb6AcYfmg",
-                "customer_email": "billing@aperture-analytics.co",
-                # Semantic markers mirrored from the live Stripe dispute
-                # metadata so the agent's investigation prompt picks up
-                # the W7R framing whether it reads webhook payload or
-                # the Stripe object directly via Coral SQL.
-                "metadata": {
-                    "workflow": "W7R",
-                    "workflow_label": "documented_incident_prorata",
-                    "semantic_reason": "service_degradation_claim",
-                    "disputed_window_start": "2026-04-13T08:00:00+00:00",
-                    "disputed_window_end": "2026-04-15T08:00:00+00:00",
-                    "customer_claim": (
-                        "Custom Reports degraded for 2 days during the cycle"
-                    ),
-                    "expected_amount_minor": "56000",
-                },
             },
         },
         "short_id_prefix": "APR",
