@@ -1215,46 +1215,70 @@ export function citationUrl(
   const src = source.toLowerCase();
   const tbl = (table ?? "").toLowerCase();
 
+  // Placeholder refs ("finding/3", "evidence/12") are agent-internal
+  // accumulator pointers - they don't map to anything in the upstream
+  // source. Don't pretend they do; the chip stays a plain span.
+  if (/^(finding|evidence)\//i.test(ref)) return null;
+
+  // Shape predicates - used both by the typed-table branches and the
+  // bare-ref fallback below so a finding can carry just the id.
+  const looksLikeNotionUuid = /^[0-9a-f]{32}$|^[0-9a-f-]{36}$/i.test(ref);
+  const looksLikeStripeId = /^(du|ch|cus|pi|py|in|re|sub|prod|evt)_/.test(ref);
+  const looksLikeAllDigits = /^\d+$/.test(ref);
+
   if (src === "stripe") {
-    if (tbl === "disputes") {
+    if (tbl === "disputes" || ref.startsWith("du_")) {
       return `https://dashboard.stripe.com/test/disputes/${ref}`;
     }
-    if (tbl === "charges" || tbl === "payments" || tbl === "payment_intents") {
+    if (
+      tbl === "charges" ||
+      tbl === "payments" ||
+      tbl === "payment_intents" ||
+      ref.startsWith("ch_") ||
+      ref.startsWith("pi_") ||
+      ref.startsWith("py_")
+    ) {
       return `https://dashboard.stripe.com/test/payments/${ref}`;
     }
-    if (tbl === "customers") {
+    if (tbl === "customers" || ref.startsWith("cus_")) {
       return `https://dashboard.stripe.com/test/customers/${ref}`;
     }
-    // Best-effort fallback by ref-prefix when the table wasn't supplied
-    // (older briefs sometimes only carry the bare ref string). Stripe
-    // record IDs are prefix-typed, so this is structurally safe.
-    if (ref.startsWith("du_")) {
-      return `https://dashboard.stripe.com/test/disputes/${ref}`;
-    }
-    if (ref.startsWith("ch_") || ref.startsWith("pi_") || ref.startsWith("py_")) {
-      return `https://dashboard.stripe.com/test/payments/${ref}`;
-    }
-    if (ref.startsWith("cus_")) {
-      return `https://dashboard.stripe.com/test/customers/${ref}`;
+    if (ref.startsWith("in_")) return `https://dashboard.stripe.com/test/invoices/${ref}`;
+    if (ref.startsWith("re_")) return `https://dashboard.stripe.com/test/refunds/${ref}`;
+    if (ref.startsWith("sub_"))
+      return `https://dashboard.stripe.com/test/subscriptions/${ref}`;
+    // Bare ref without prefix - search Stripe directly.
+    if (looksLikeStripeId) {
+      return `https://dashboard.stripe.com/test/search?query=${encodeURIComponent(ref)}`;
     }
     return null;
   }
 
-  if (src === "hubspot" && (tbl === "companies" || ref.startsWith("company/"))) {
-    const id = ref.replace(/^company\//, "");
-    // No portalId hardcoded - HubSpot routes /contacts/portalId/company/{id}
-    // through the user's active portal; passing the literal "portalId"
-    // segment is what HubSpot's own deep-link docs recommend when the
-    // portal isn't known at build time.
-    return `https://app.hubspot.com/contacts/portalId/company/${id}`;
+  if (src === "hubspot") {
+    if (tbl === "companies" || ref.startsWith("company/")) {
+      const id = ref.replace(/^company\//, "");
+      return `https://app.hubspot.com/contacts/portalId/company/${id}`;
+    }
+    if (tbl === "contacts" || ref.startsWith("contact/")) {
+      const id = ref.replace(/^contact\//, "");
+      return `https://app.hubspot.com/contacts/portalId/contact/${id}`;
+    }
+    // Bare ~10-digit HubSpot id - assume company (the most common
+    // citation kind on a chargeback brief).
+    if (looksLikeAllDigits && ref.length >= 6) {
+      return `https://app.hubspot.com/contacts/portalId/company/${ref}`;
+    }
+    return null;
   }
 
-  if (src === "notion" && (tbl === "pages" || ref.startsWith("page/"))) {
-    const raw = ref.replace(/^page\//, "");
-    // Notion's URL slug uses the 32-char id with no dashes; if the ref
-    // is already dashed, drop the dashes.
-    const id = raw.replace(/-/g, "");
-    return `https://www.notion.so/${id}`;
+  if (src === "notion") {
+    if (tbl === "pages" || ref.startsWith("page/") || looksLikeNotionUuid) {
+      const raw = ref.replace(/^page\//, "");
+      // Notion's URL slug uses the 32-char id with no dashes.
+      const id = raw.replace(/-/g, "");
+      return `https://www.notion.so/${id}`;
+    }
+    return null;
   }
 
   if (src === "datadog") {
@@ -1266,32 +1290,31 @@ export function citationUrl(
         ref.replace(/^incident\//, ""),
       )}`;
     }
-    if (tbl === "events" || /^\d+$/.test(ref)) {
+    if (tbl === "events" || looksLikeAllDigits) {
       return `https://app.datadoghq.com/event/event?id=${encodeURIComponent(ref)}`;
     }
-    // Fallback - Datadog top-level search.
-    return `https://app.datadoghq.com/search?query=${encodeURIComponent(ref)}`;
+    return null;
   }
 
   if (src === "intercom") {
-    // Intercom workspace slug comes from env (Vite-injected). Without
-    // it we still ship the operator to the right org's Intercom
-    // inbox search rather than a dead chip.
     const ws =
-      (import.meta.env.VITE_INTERCOM_WORKSPACE as string | undefined) ||
-      "_";
-    const id = ref.replace(/^conv\//, "");
+      (import.meta.env.VITE_INTERCOM_WORKSPACE as string | undefined) || "_";
     if (tbl === "conversations" || ref.startsWith("conv/")) {
+      const id = ref.replace(/^conv\//, "");
       return `https://app.intercom.com/a/apps/${ws}/inbox/conversation/${id}`;
     }
     if (tbl === "contacts" || ref.startsWith("contact/")) {
-      return `https://app.intercom.com/a/apps/${ws}/users/${id.replace(/^contact\//, "")}`;
+      const id = ref.replace(/^contact\//, "");
+      return `https://app.intercom.com/a/apps/${ws}/users/${id}`;
     }
-    return `https://app.intercom.com/a/apps/${ws}/inbox/search?q=${encodeURIComponent(ref)}`;
+    // Bare hex contact-id shape (24 chars) - treat as a contact.
+    if (/^[0-9a-f]{24}$/i.test(ref)) {
+      return `https://app.intercom.com/a/apps/${ws}/users/${ref}`;
+    }
+    return null;
   }
 
   if (src === "zendesk") {
-    // Subdomain from env - we seed against minylabs in dev.
     const sub =
       (import.meta.env.VITE_ZENDESK_SUBDOMAIN as string | undefined) ||
       "minylabs";
@@ -1301,51 +1324,53 @@ export function citationUrl(
     if (tbl === "users" || ref.startsWith("user/")) {
       return `https://${sub}.zendesk.com/agent/users/${ref.replace(/^user\//, "")}`;
     }
-    return `https://${sub}.zendesk.com/agent/search?q=${encodeURIComponent(ref)}`;
+    // Bare short-number → assume ticket id.
+    if (looksLikeAllDigits && ref.length <= 8) {
+      return `https://${sub}.zendesk.com/agent/tickets/${ref}`;
+    }
+    return null;
   }
 
   if (src === "pagerduty") {
-    // Account subdomain from env; fall through to top-level search.
     const sub =
-      (import.meta.env.VITE_PAGERDUTY_SUBDOMAIN as string | undefined) ||
-      "app";
+      (import.meta.env.VITE_PAGERDUTY_SUBDOMAIN as string | undefined) || "app";
     if (tbl === "incidents" || ref.startsWith("incident/")) {
       return `https://${sub}.pagerduty.com/incidents/${ref.replace(/^incident\//, "")}`;
     }
-    return `https://${sub}.pagerduty.com/search?q=${encodeURIComponent(ref)}`;
+    return null;
   }
 
   if (src === "slack") {
-    // Slack permalinks need workspace + channel + ts which we don't
-    // carry in the bare ref. Send the operator to the workspace search
-    // for the ref keyword - better than a dead chip.
-    const ws =
-      (import.meta.env.VITE_SLACK_WORKSPACE as string | undefined) ||
-      "app";
-    return `https://${ws}.slack.com/search?query=${encodeURIComponent(ref)}`;
+    // Slack permalinks need workspace + channel + ts; without them we
+    // leave the chip non-clickable rather than land in a generic
+    // search page that doesn't help.
+    return null;
   }
 
   if (src === "posthog") {
     const proj =
       (import.meta.env.VITE_POSTHOG_PROJECT as string | undefined) || "";
-    if (proj) {
-      return `https://app.posthog.com/project/${proj}/events?q=${encodeURIComponent(ref)}`;
+    if (!proj) return null;
+    if (tbl === "events" || tbl === "event") {
+      return `https://us.posthog.com/project/${proj}/events/${encodeURIComponent(ref)}`;
     }
-    return `https://app.posthog.com/events?q=${encodeURIComponent(ref)}`;
+    if (tbl === "persons" || tbl === "person") {
+      return `https://us.posthog.com/project/${proj}/persons/${encodeURIComponent(ref)}`;
+    }
+    return null;
   }
 
   if (src === "salesforce") {
     const inst =
       (import.meta.env.VITE_SALESFORCE_INSTANCE as string | undefined) ||
-      "login.salesforce.com";
+      null;
+    if (!inst) return null;
     return `https://${inst}/lightning/r/${ref}/view`;
   }
 
-  // Unknown / unmapped source - last-resort Google search on the ref
-  // so the chip always opens SOMETHING rather than staying dead.
-  return `https://www.google.com/search?q=${encodeURIComponent(
-    `${src} ${ref}`,
-  )}`;
+  // Unknown source - leave the chip dead rather than sending the
+  // operator to a Google search that has nothing to do with the brief.
+  return null;
 }
 
 function CiteChip({

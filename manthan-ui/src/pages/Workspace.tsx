@@ -291,6 +291,108 @@ function sniffSourceFromText(t: string): string | null {
   return null;
 }
 
+/**
+ * Pull the canonical upstream record id out of a finding's prose so
+ * the CiteChip can deep-link to it. The agent always writes the real
+ * id inline (du_1Tch1O..., 37043656-c526-..., "monitor 20175237",
+ * "ticket 227", etc.); we just need to extract it per-source.
+ *
+ * Returns null when no recognizable id appears - the CiteChip then
+ * renders as a non-clickable span rather than a junk URL.
+ */
+function sniffRefFromText(text: string, source: string): string | null {
+  const t = text || "";
+  switch (source) {
+    case "stripe": {
+      // Disputes have the strongest signal; charges next; then customers.
+      const du = t.match(/\bdu_[A-Za-z0-9]+/);
+      if (du) return du[0];
+      const ch = t.match(/\bch_[A-Za-z0-9]+/);
+      if (ch) return ch[0];
+      const pi = t.match(/\bpi_[A-Za-z0-9]+/);
+      if (pi) return pi[0];
+      const cus = t.match(/\bcus_[A-Za-z0-9]+/);
+      if (cus) return cus[0];
+      return null;
+    }
+    case "hubspot": {
+      // The agent writes any of:
+      //   "HubSpot company 324968425171"
+      //   "HubSpot company Aperture Analytics (id 324968425171)"
+      //   "company id 324968425171"
+      // Look first for an explicit "id NNNN" near company, then any
+      // bare 8+ digit number once we know "hubspot" is in the text.
+      const explicit = t.match(/\b(?:id|ID|#)[\s:]*(\d{8,})/);
+      if (explicit) return explicit[1];
+      const dashed = t.match(/\bcompany\/(\d+)/);
+      if (dashed) return dashed[1];
+      const bare = t.match(/\b(\d{10,})\b/);
+      if (bare) return bare[1];
+      return null;
+    }
+    case "notion": {
+      // Notion UUIDs in dashed (8-4-4-4-12) or undashed (32 hex) form.
+      const dashed = t.match(
+        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+      );
+      if (dashed) return dashed[0];
+      const undashed = t.match(/\b[0-9a-f]{32}\b/i);
+      if (undashed) return undashed[0];
+      return null;
+    }
+    case "datadog": {
+      // Monitor id is the most cited; then incident; then bare event id.
+      const monitor = t.match(/monitor\s+(?:id\s+)?(\d{4,})/i);
+      if (monitor) return monitor[1];
+      const inc = t.match(/\b(INC-\d{4}-\d{2}-\d{2}-[A-Za-z0-9_-]+)\b/);
+      if (inc) return inc[1];
+      const evt = t.match(/event\s+(?:id\s+)?(\d{6,})/i);
+      if (evt) return evt[1];
+      return null;
+    }
+    case "zendesk": {
+      // The agent writes any of:
+      //   "Zendesk ticket 227"
+      //   "Zendesk tickets (e.g. 227,226,225)"
+      //   "ticket #227"
+      // Allow non-digit cruft between "ticket"+s and the first id.
+      const m = t.match(/ticket[s]?[^0-9]{0,30}(\d{1,8})/i);
+      if (m) return m[1];
+      return null;
+    }
+    case "intercom": {
+      // Intercom uses 24-char hex contact ids in newer workspaces and
+      // long numeric (12+ digits) ids elsewhere. The seeded contact
+      // here is 24-char hex; conversation ids are long numeric.
+      // Brief text shape: "ids 215474509473626 etc." or "id ...".
+      const hex = t.match(/\b[0-9a-f]{24}\b/i);
+      if (hex) return hex[0];
+      const numericIds = t.match(/\bids?[\s:]*(\d{10,})/i);
+      if (numericIds) return numericIds[1];
+      const conv = t.match(/conversation[s]?[^0-9]{0,30}(\d{8,})/i);
+      if (conv) return conv[1];
+      return null;
+    }
+    case "slack": {
+      // Channels show up as C##### in our seed; or '#billing-platform'.
+      const c = t.match(/\b(C[A-Z0-9]{8,})\b/);
+      if (c) return c[1];
+      const hash = t.match(/#([a-z0-9_-]+-ops?|[a-z0-9_-]+-platform)/);
+      if (hash) return hash[1];
+      return null;
+    }
+    case "posthog":
+    case "sentry":
+    case "salesforce":
+    case "pagerduty":
+      // Sources without a clean inline pattern in the brief - we leave
+      // these to the structured citation field rather than guessing.
+      return null;
+    default:
+      return null;
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Memo adapters - convert the existing ApiCase / ApiActionRow shapes
 // into the MemoCaseData / MemoFinding / MemoAction props the new
@@ -357,18 +459,31 @@ function memoCaseFromApi(c: ApiCase): MemoCaseData {
 
 function memoFindingsFromApi(c: ApiCase): MemoFinding[] {
   return (c.findings ?? []).map((f) => {
-    // Prefer the first structured citation. Fall back to sniffing the
-    // source from the finding text so the byline isn't empty.
+    // Prefer the first structured citation when the backend gives us
+    // one. Otherwise sniff the source AND extract a real upstream id
+    // from the finding text - the agent always writes the canonical
+    // record id inline (du_..., ch_..., a Notion UUID, "monitor N",
+    // "company N", "ticket N"). Using that real id lets the CiteChip
+    // deep-link straight to the upstream record instead of pretending
+    // a placeholder like "finding/3" is a real reference.
     const firstCite = (f.citations ?? []).find((cc) => cc?.source);
-    const src = firstCite?.source ?? sniffSourceFromText(f.text) ?? "brief";
+    const sniffedSrc = sniffSourceFromText(f.text);
+    const src = firstCite?.source ?? sniffedSrc ?? "brief";
+    const sniffedRef =
+      sniffedSrc ? sniffRefFromText(f.text, sniffedSrc) : null;
     const citeRef =
-      firstCite?.ref ?? firstCite?.url ?? `finding/${f.seq}`;
-    // Prefer the backend-built URL when present; fall back to the client
-    // helper which knows the same templates. Falling through leaves
-    // `url` null and the CiteChip renders as an inert span.
+      firstCite?.ref ?? sniffedRef ?? `finding/${f.seq}`;
+    // Prefer the backend-built URL when present; otherwise build one
+    // from the sniffed source + ref. citationUrl returns null for
+    // placeholder refs so the chip renders as a non-clickable span
+    // rather than a junk link.
     const url =
       firstCite?.url ??
-      citationUrl(firstCite?.source, firstCite?.table, firstCite?.ref);
+      citationUrl(
+        firstCite?.source ?? sniffedSrc,
+        firstCite?.table,
+        firstCite?.ref ?? sniffedRef,
+      );
     return { src, text: f.text, citeRef, url };
   });
 }
