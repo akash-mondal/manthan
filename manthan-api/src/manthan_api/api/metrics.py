@@ -5,9 +5,12 @@ Cheap aggregations over cases + actions. Polled by the UI every ~10s.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from manthan_api.api.sources import SOURCE_REGISTRY
 from manthan_api.db import get_conn
 from manthan_api.middleware.tenant import TenantCtx, get_ctx
 
@@ -40,10 +43,14 @@ async def dashboard_metrics(ctx: TenantCtx = Depends(get_ctx)) -> DashboardMetri
         )
         by_status = {r["status"]: r["n"] for r in rows}
 
-        # Sources connected
-        sources = await conn.fetchval(
-            "SELECT count(*) FROM sources WHERE org_id=$1 AND status='connected'",
-            ctx.org_id,
+        # Sources connected. Note: the `sources` DB table is currently
+        # unused in v1 (the Sources page derives state from env vars at
+        # request time, not from a stored config). Match that source of
+        # truth so the sidebar count agrees with the page: count
+        # registered sources whose required env vars are all set.
+        sources = sum(
+            1 for s in SOURCE_REGISTRY
+            if all(os.environ.get(e) for e in s["envs"])
         )
 
         # $ recovered this month (sum of decision_amount_minor for resolved
