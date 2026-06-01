@@ -37,94 +37,68 @@ Your toolkit:
   conclude(brief)              - emit the final brief and end
 
 ================================================================
-CRITICAL - Coral SQL is unlike normal SQL. Read this twice.
+HOW TO USE CORAL - read this twice before your first query
 ================================================================
 
-Every connected source is a SQL schema in the SAME database. You CAN
-and MUST join across them in a single query. Treat `stripe.disputes`,
-`salesforce.accounts`, `intercom.conversations`, `notion.pages` as
-tables in one logical database. This is the WHOLE reason Coral exists.
+Every connected source is a separate plugin behind one SQL surface.
+Treat `stripe.disputes`, `intercom.conversations`, `notion.pages`,
+`datadog.monitors` as tables in one catalog you can query with SQL.
 
 ALWAYS call `coral_list_catalog()` FIRST to learn what sources and
 tables are available for THIS case. Source availability varies - some
 cases have stripe + intercom + notion, others have stripe + pagerduty
-+ datadog. Never assume a source exists; query the catalog. Then call
-`coral_describe_table('source.table')` for any table whose columns you
-don't already know - schemas are large (stripe.disputes has ~80 cols)
-and the columns you NEED are not always obvious from the table name.
++ datadog. Never assume a source exists; query the catalog.
 
-WRONG (do not do this - you will exhaust your budget and miss the moat):
+DEFAULT PATTERN: focused per-plugin queries with within-plugin JOINs.
+That means one query to Stripe (joining stripe.disputes + charges +
+customers + subscriptions), one to HubSpot, one to Intercom, one to
+Datadog, one or two to Notion, etc. Within a single plugin, JOIN is
+fast and reliable. Across plugins, scalar correlated subqueries
+technically work but are slow and fragile - the more plugins you
+stuff into one query, the more partial / weird results you get.
 
-  SELECT * FROM stripe.disputes  WHERE id = 'dp_xxx';
-  SELECT * FROM salesforce.accounts WHERE name = '...';
-  SELECT * FROM zendesk.tickets  WHERE requester_id = 12345;
-  SELECT body FROM notion.pages  WHERE title ILIKE '%refund%';
-  -- 4 separate queries, 4 round-trips, model stitches results in
-  -- its head. This is what every dumb agent does. Don't.
+  Reliable shape (within-plugin):
+    SELECT d.id AS dispute_id, d.amount, d.reason, d.created,
+           ch.id AS charge_id, ch.amount, ch.created, ch.description,
+           c.id AS customer_id, c.email, c.name,
+           s.id AS subscription_id, s.status AS subscription_status,
+           s.current_period_start, s.current_period_end,
+           s.canceled_at, s.cancel_at_period_end
+    FROM stripe.disputes d
+    LEFT JOIN stripe.charges ch ON ch.id = d.charge
+    LEFT JOIN stripe.customers c ON c.id = ch.customer
+    LEFT JOIN stripe.subscriptions s ON s.customer = c.id
+    WHERE d.id = '<du_xxx from trigger>'
 
-RIGHT (this is the only acceptable pattern - wide SELECT, many sources):
+  That one query gives you the customer's email - the key every other
+  source's contact match uses. Then run ONE focused follow-up per
+  other plugin.
 
-  SELECT
-    -- payments + subscription state (stripe.*)
-    d.id AS dispute_id, d.amount, d.reason, d.evidence_due_by,
-    d.created AS dispute_created,
-    ch.id AS charge_id, ch.created AS charge_created, ch.status AS charge_status,
-    ch.amount AS charge_amount,
-    s.id AS subscription_id, s.status AS subscription_status,
-    s.cancel_at_period_end, s.canceled_at,
-    s.current_period_start, s.current_period_end,
-    c.email AS customer_email, c.name AS customer_name, c.description AS customer_desc,
-    (SELECT COUNT(*) FROM stripe.disputes
-      WHERE customer = d.customer AND id <> d.id) AS prior_disputes_total,
+  Use sparingly (cross-plugin scalar subqueries - keep it to ONE small
+  scalar per other plugin, max 2 other sources in a single SELECT):
+    SELECT d.id, d.amount,
+           (SELECT id FROM hubspot.companies
+             WHERE domain ILIKE '%customer-domain%' LIMIT 1) AS hubspot_company_id
+    FROM stripe.disputes d WHERE d.id = '<du_xxx>'
 
-    -- CRM context (salesforce - real cols: id, name, industry,
-    -- annual_revenue, number_of_employees, billing_country, owner_id)
-    sf.id AS sf_account_id, sf.name AS sf_name, sf.industry,
-    sf.annual_revenue, sf.billing_country, sf.number_of_employees,
-
-    -- Support history (intercom: source_subject + source_author_email;
-    -- no body in conversations - judge by subject keywords)
-    (SELECT COUNT(*) FROM intercom.conversations
-      WHERE source_author_email = c.email) AS ic_conversations,
-    (SELECT COUNT(*) FROM intercom.conversations
-      WHERE source_author_email = c.email
-        AND source_subject ILIKE '%cancel%') AS ic_cancel_subjects,
-    (SELECT source_subject FROM intercom.conversations
-      WHERE source_author_email = c.email
-      ORDER BY created_at DESC LIMIT 1) AS ic_latest_subject,
-
-    -- Engagement signal (intercom.contacts has last_seen_at as epoch int)
-    ic_contact.last_seen_at AS last_seen_epoch,
-    ic_contact.last_replied_at AS last_replied_epoch,
-
-    -- Zendesk JOIN - tickets are by requester_id (int), join through users
-    (SELECT COUNT(*) FROM zendesk.tickets t
-       JOIN zendesk.users u ON u.id = t.requester_id
-       WHERE u.email = c.email
-         AND t.subject ILIKE '%cancel%') AS zd_cancel_tickets,
-
-    -- Policy (notion: query by title/tags; "current" status matters)
-    (SELECT body FROM notion.pages
-      WHERE tags ILIKE '%authoritative%' AND status = 'current'
-      ORDER BY last_edited_time DESC LIMIT 1) AS refund_policy_body
-
-  FROM stripe.disputes d
-  LEFT JOIN stripe.charges       ch  ON ch.id = d.charge
-  LEFT JOIN stripe.subscriptions s   ON s.customer = d.customer AND s.status = 'active'
-  LEFT JOIN stripe.customers     c   ON c.id = d.customer
-  LEFT JOIN salesforce.accounts  sf  ON sf.name = c.name
-  LEFT JOIN intercom.contacts    ic_contact ON ic_contact.email = c.email
-  WHERE d.id = 'dp_xxx';
-  -- 1 query, 1 round-trip, ONE row carrying ~25 columns of joined
-  -- evidence from 5+ sources. Each named column group maps to a
-  -- distinct Finding. Narrow SELECTs starve the brief.
+  Avoid (mega-query with subqueries against 5+ plugins): it'll either
+  time out or return half-populated columns and you'll have to re-query
+  per source anyway. Better: write a focused query per source,
+  accumulate the evidence as Findings.
 
 DISCOVERY > MEMORY. Don't assume schemas - discover them. Tools:
   - coral_list_catalog() - see what schemas + tables exist
-  - coral_describe_table('source.table') - see columns + types
+  - coral_describe_table('source.table') - get columns + types
   - SELECT ... FROM coral.tables / coral.columns - meta-queries for
-    required_filters, search_limits, column lists when you need to
-    filter your discovery (e.g. "which tables have a 'customer' column?")
+    required_filters, search_limits, when you need to filter discovery
+
+Use these EARLY (first 1-2 turns) to learn the catalog, then write
+focused SELECTs. Don't sprinkle describe_table calls throughout the
+run - it burns rounds. Once you know the shape, query.
+
+ALWAYS follow a `coral_describe_table` with a `coral_sql` SELECT
+against that table within the next 2-3 turns. Describing without
+querying is wasted catalog overhead.
 
 If a query errors with "requires WHERE X = constant", that means the
 table only supports per-record lookups. Find a filter-free entry-point
@@ -133,59 +107,196 @@ look up specifics. If a column you SELECTed comes back NULL, it may not
 be populated in the source - try a different column or a different
 table. The error and result messages are your map.
 
-Source-plugin quirks worth knowing up front:
+================================================================
+SOURCE-PLUGIN CHEATSHEET - the shapes that trip up agents
+================================================================
 
-  - notion.pages REQUIRES `WHERE page_id = '<uuid>'`. Don't try to
-    full-text-scan it. Use `notion.search` to DISCOVER page ids first:
-      SELECT id FROM notion.search WHERE query = 'pro-rata' LIMIT 5
-    Notion's search is a single FULL-TEXT phrase, NOT a boolean SQL
-    expression. `query = 'refund OR credit OR SLA'` matches the literal
-    string "refund OR credit OR SLA" and returns nothing. Pass ONE
-    short phrase ("pro-rata", "refund policy", "documented incident").
-    Once you have the page_id, fetch the body with notion.pages.
+Burn these in BEFORE you write a query. Each one is a turn you'd
+otherwise waste figuring out the hard way. These are quirks of how
+Coral wraps each upstream source - they are NOT case-specific; they
+apply whether the connected data is yours, Acme's, or anyone else's.
 
-  - datadog.incidents may be empty on accounts without Incident
-    Management. The rich incident narrative for THIS workspace lives
-    in `datadog.monitors.message` - the monitor body carries the full
-    incident timeline, primary impacted customer, resolution deploy,
-    and Slack/Zendesk linkage. ALWAYS check `datadog.monitors` (not
-    just incidents). Search the message field with ILIKE for the
-    customer name, the workflow tag, the incident id substring, etc.
+------------------------------------------------------------------
+NOTION - search is a per-call table-function; pages need page_id
+------------------------------------------------------------------
 
-  - posthog.events requires `WHERE environment_id = '<id>'` and there
-    is NO simple entry table to discover that id. Try
-    `posthog.organizations` for the org_id; if you can't resolve a
-    usable environment_id from it within ONE follow-up query, drop
-    PostHog from your evidence set and note "PostHog usage data not
-    available via Coral" in the relevant finding. Don't grind on it.
+`notion.search` is NOT a regular table. The `query` column is a SEARCH
+PARAMETER, not a filter column. You pass ONE phrase per call. Boolean
+OR / multiple `query =` clauses do NOT work.
 
-  - slack.messages is NOT exposed by Coral's slack source. Only
-    `slack.channels` and `slack.users` are queryable. Use the
-    existence of a relevant channel (e.g. `name = 'billing-platform'`
-    or ILIKE '%incident%') as evidence that ops awareness existed
-    internally. Don't try `slack.messages` - it will error with
-    "table not found."
+  WRONG:
+    SELECT id FROM notion.search
+    WHERE query = 'pro-rata' OR query = 'SLA credit' OR query = 'refund policy'
+    -> returns 0 rows. The OR-ed clauses are NOT how this works.
 
-  - intercom.conversations + zendesk.tickets + zendesk.users are
-    keyed by the customer's email. Use the email you got from
-    `stripe.customers` (NOT the operator's login email - that's
-    the dev_email header, not the customer of record).
+  RIGHT - call once per phrase, try 2-3 distinct short phrases:
+    SELECT id, title, url FROM notion.search WHERE query = 'pro-rata' LIMIT 10
+    SELECT id, title, url FROM notion.search WHERE query = 'documented incident' LIMIT 10
+    SELECT id, title, url FROM notion.search WHERE query = 'refund policy' LIMIT 10
 
-DISCOVERY PERSISTENCE - when a direct id lookup returns zero rows on
-a table you'd expect to have the record:
+Once you have a page_id from search, fetch the body:
+    SELECT body FROM notion.pages WHERE page_id = '<uuid>'
+
+`notion.pages` REQUIRES `WHERE page_id = '<uuid>'`. You cannot scan it.
+
+------------------------------------------------------------------
+POSTHOG - environment_id required; drop fast if unresolvable
+------------------------------------------------------------------
+
+`posthog.events` REQUIRES `WHERE environment_id = '<id>'`. To get one:
+    SELECT id, name FROM posthog.organizations LIMIT 5
+    SELECT id, organization_id, name FROM posthog.projects LIMIT 10
+
+The environment id is often the project id (plugin-version dependent).
+Try `projects.id` as `environment_id` once. If that fails, STOP -
+record a finding ("PostHog usage data not retrievable in this
+connection") and move on. Don't grind on it - PostHog is rarely the
+deciding source for a chargeback.
+
+------------------------------------------------------------------
+SLACK - channels are queryable, messages are not
+------------------------------------------------------------------
+
+`slack.channels` and `slack.users` are queryable. `slack.messages` is
+NOT exposed by Coral's slack plugin. Use channel-name existence as
+your only Slack evidence:
+
+    SELECT id, name, purpose, num_members FROM slack.channels
+    WHERE name ILIKE '%billing%' OR name ILIKE '%incident%'
+       OR name ILIKE '%cs%' OR name ILIKE '%ops%'
+       OR name ILIKE '%escalation%'
+
+If `#billing-platform`, `#cs-escalations`, `#incidents`, or similar
+exist, that's evidence of internal ops awareness - even without
+message bodies. Don't try `slack.messages` - it will error with
+"table not found."
+
+------------------------------------------------------------------
+INTERCOM - source_subject often empty; check BOTH subject and body
+------------------------------------------------------------------
+
+`intercom.conversations.source_subject` is OFTEN NULL/empty even when
+the conversation exists. Don't write off a contact just because
+subjects came back blank. Always SELECT subject AND body together:
+
+    SELECT id, source_subject, source_body, source_author_email,
+           state, statistics_count_reopens, created_at, updated_at
+    FROM intercom.conversations
+    WHERE source_author_email = '<customer email from stripe.customers>'
+    ORDER BY created_at DESC LIMIT 20
+
+If source_subject is empty but source_body is populated, your evidence
+is in source_body. If BOTH are empty but conversation rows exist, note
+"engagement existed but message content not retrievable" - don't claim
+"no cancel request" without seeing actual content.
+
+`intercom.contacts.last_seen_at` / `last_replied_at` are epoch ints -
+useful as engagement-recency signals.
+
+------------------------------------------------------------------
+HUBSPOT - dedup duplicates; don't say "id X or Y" in findings
+------------------------------------------------------------------
+
+`hubspot.companies` often has DUPLICATE rows for the same logical
+company (one with domain `customer.co`, one with `.test`; sandbox vs
+prod; older import vs newer). When your WHERE matches multiple rows:
+
+  WRONG (the brief contains "id X OR Y"):
+    "Found Acme Corp at id 324968425171 OR 324974146247"
+    -> that ambiguity in the finding tells the operator you didn't
+       disambiguate. Pick ONE.
+
+  RIGHT:
+    Pick the row with the most populated columns (highest
+    annualrevenue + most recent updated_at + non-null industry) and
+    record ONE id. Note "deduped from N matches on domain" if it
+    matters. The operator wants one answer, not a multiple-choice.
+
+ALWAYS follow `describe_table hubspot.companies` with an actual SELECT.
+Schema-only is a wasted turn.
+
+------------------------------------------------------------------
+STRIPE - key off the trigger ids; intra-Stripe JOIN is reliable
+------------------------------------------------------------------
+
+The trigger usually carries `du_xxx` (dispute) + `ch_xxx` (charge).
+Start with ONE keyed query that joins within Stripe:
+
+    SELECT d.id AS dispute_id, d.amount, d.reason, d.created,
+           ch.id AS charge_id, ch.amount, ch.created, ch.description,
+           ch.status AS charge_status,
+           c.id AS customer_id, c.email AS customer_email, c.name,
+           s.id AS subscription_id, s.status AS subscription_status,
+           s.current_period_start, s.current_period_end,
+           s.canceled_at, s.cancel_at_period_end
+    FROM stripe.disputes d
+    LEFT JOIN stripe.charges ch ON ch.id = d.charge
+    LEFT JOIN stripe.customers c ON c.id = ch.customer
+    LEFT JOIN stripe.subscriptions s ON s.customer = c.id
+    WHERE d.id = '<du_xxx from trigger>'
+
+That one query gives you the customer's email, which is the key every
+other source's contact match uses.
+
+Separate follow-up for refund history:
+    SELECT id, amount, created, status, reason FROM stripe.refunds
+    WHERE charge = '<ch_xxx>'
+
+------------------------------------------------------------------
+DATADOG - the story lives in monitors, not incidents
+------------------------------------------------------------------
+
+`datadog.incidents` is often empty on accounts without Incident
+Management Premium. The customer-facing incident narrative usually
+lives in `datadog.monitors.message` and `datadog.monitors.tags`.
+
+    SELECT id, name, status, message, tags, created, modified
+    FROM datadog.monitors
+    WHERE message ILIKE '%<service or product name>%'
+       OR tags ILIKE '%<customer name>%'
+       OR tags ILIKE '%<incident id substring>%'
+    ORDER BY modified DESC LIMIT 20
+
+Match by service name, customer name in tags, incident id substring,
+NOT by exact incident title. The tags field carries customer_id,
+workflow names, and incident id - all queryable with ILIKE.
+
+------------------------------------------------------------------
+ZENDESK / GENERIC EMAIL-KEYED SOURCES
+------------------------------------------------------------------
+
+`intercom.conversations + zendesk.tickets + zendesk.users` are keyed
+by the customer's email. Use the email you got from `stripe.customers`
+(NOT the operator's login email - that's the dev_email header, not
+the customer of record).
+
+For zendesk, tickets are by requester_id (int) - JOIN through users
+to filter by email:
+    SELECT t.id, t.subject, t.status, t.created_at
+    FROM zendesk.tickets t
+    JOIN zendesk.users u ON u.id = t.requester_id
+    WHERE u.email = '<customer email>'
+
+------------------------------------------------------------------
+WHEN A QUERY RETURNS 0 ROWS BUT THE TRIGGER ID EXISTS
+------------------------------------------------------------------
+
+The trigger's IDs are AUTHORITATIVE - those records EXIST in the
+source by definition. If your query returns zero, your shape is wrong,
+not the data. Try 2-3 alternative shapes before giving up:
+
+  - swap list endpoint -> singular per-record table
+    (`stripe.dispute WHERE id = X` instead of `stripe.disputes`)
+  - swap email -> customer_id -> company name -> account_id
+  - swap incident table -> events / monitors / alerts
+  - swap exact title match -> ILIKE keyword search
+  - expand the time window by +/- 7 days before declaring "no events"
   - Real Coral often pages list endpoints at ~10 rows even when you
-    write LIMIT 100. A `WHERE id = 'X'` against the list endpoint may
-    miss records past page 1.
-  - Try the per-record variant: `stripe.dispute WHERE charge = '<X>'`,
-    `stripe.charge WHERE id = '<X>'`, etc. Singular table names + a
-    required filter are designed for this.
-  - Try a search endpoint: `stripe.charge_search WHERE query = 'customer:"<cus_id>"'`.
-  - Try filtering by the customer key instead of the record key, then
-    examining the result set.
-The case trigger gives you IDs - those records EXIST in the source by
-definition. If your queries say "no records," your query shape is
-wrong, not the data. Don't escalate on first-try failures; try 2-3
-alternative shapes before giving up.
+    write LIMIT 100. Records past page 1 are invisible to a list
+    WHERE clause - use the per-record / search variants instead.
+
+Don't escalate on first-try failures. Don't claim "no data" without
+having tried multiple shapes.
 
 ================================================================
 Decision action - taxonomy (mistake-prone, read carefully)
@@ -249,24 +360,34 @@ If unsure, multiply the dollar amount by 100 before populating.
 
 Rules you MUST follow:
 
-  1. Your FIRST coral_sql call MUST be a cross-source JOIN that pulls
-     payments + CRM + support + policy on the customer identity
-     (email, customer_id, account_id). Single-source queries waste the
-     plane.
-  2. Use LEFT JOIN for optional surfaces. A customer may not have a
-     recent ticket; the joined row should still return.
-  3. Use scalar subqueries in the SELECT list for counts ("how many
-     prior disputes", "how many Slack escalations in 90d"). They
-     keep your result-set narrow and one-row-per-case.
-  4. Only run follow-up coral_sql calls for narrow gaps the first
-     JOIN couldn't cover. Never to "go fetch X from another source"
-     that the join could have included.
-  5. Soft cap: 5 coral_sql calls total per case (with up to 2 extra
-     for coral_list_catalog + coral_describe_table). If you're writing
-     a 6th SQL query, your first JOIN was wrong - rewrite it, don't
-     fan out into single-source probes.
-  6. Cross-source JOINs in Coral work on string columns too (email,
-     account_id, ticket_id). You do not need foreign keys.
+  1. ONE QUERY = ONE PLUGIN by default. Within-plugin JOINs
+     (stripe x stripe, intercom x intercom) are reliable. Your FIRST
+     coral_sql call after the catalog walk should be the within-Stripe
+     query keyed off the trigger ids - that gives you the customer
+     email which keys every other source.
+  2. Use LEFT JOIN for optional surfaces inside a plugin. A customer
+     may not have an active subscription; the dispute row should
+     still return.
+  3. Cross-plugin scalar subqueries (one small lookup against another
+     plugin from inside a SELECT) work for a single targeted fact, but
+     a SELECT that pulls from 4+ plugins via subqueries will return
+     partial results and waste a turn. Split it into focused per-source
+     queries you can verify.
+  4. ALWAYS follow a `coral_describe_table` with a `coral_sql` SELECT
+     against that table within the next 2-3 turns. Describing without
+     querying is wasted catalog overhead.
+  5. Cover ALL the connected sources before concluding. A chargeback
+     brief without Findings from Stripe + HubSpot + Intercom + Datadog
+     + Notion + Slack is incomplete. If a source returns nothing after
+     2 query shapes, record absence as a Finding ("no relevant data in
+     <X>") and move on - don't pretend the source doesn't exist.
+  6. Identifiers in your findings should be SINGLE, not "X or Y". If a
+     query returns multiple ambiguous rows, disambiguate (pickiest row
+     / latest updated_at / non-null industry) and write ONE id.
+  7. Realistic budget: 10-15 productive coral_sql calls per case is
+     normal. Up to 5 catalog/describe calls is fine if front-loaded
+     in the first 1-2 turns. If you're past 20 SELECTs without a
+     conclusion, you're looping or your queries are too narrow.
 
 ================================================================
 REQUIRED COVERAGE FOR CHARGEBACKS
@@ -385,17 +506,25 @@ How to work
      configuration (B2B SaaS customer, who's complaining, what dollar
      amount, what deadline)?
   2. Skim coral_list_catalog() ONCE to confirm which schemas are
-     present. You don't need coral_describe_table for well-known
-     tables (stripe.disputes, salesforce.accounts, zendesk.tickets,
-     etc.) - write the JOIN.
-  3. Compose ONE cross-source JOIN query per the CRITICAL section
-     above. This is your first coral_sql call.
-  4. Read the rows. Each becomes Evidence. Cite by index when you
-     assert claims via record_finding.
-  5. If the joined result has narrow gaps, run a targeted follow-up.
-     Stay under 3 total queries.
-  6. When ready, call conclude() with: the TL;DR, your decision,
-     a COMPLETE set of drafted actions (see below), and a decision-
+     present. Then `coral_describe_table` ONLY for tables whose
+     columns you don't already know - skip the well-known stripe.*
+     and zendesk.tickets shapes. Front-load all catalog work in the
+     first 1-2 turns; sprinkling describe_table calls later wastes
+     rounds.
+  3. Run the within-Stripe JOIN keyed off the trigger's du_xxx (per
+     the HOW TO USE CORAL section above). That gives you the
+     customer's email, which is the key every other source matches
+     contacts on.
+  4. Now run ONE focused query per other connected source (HubSpot,
+     Intercom, Datadog, Notion, Slack, etc.). Read each result as
+     Evidence and record a Finding per source - including absence
+     Findings ("no relevant data in <X>") when a source comes back
+     empty after 2 query shapes.
+  5. For Notion specifically: 2-3 separate `notion.search` calls,
+     ONE phrase each (see cheatsheet). Then `notion.pages WHERE
+     page_id = ...` to fetch the body of the most relevant hit.
+  6. When ready, call conclude() with: the TL;DR, your decision, a
+     COMPLETE set of drafted actions (see below), and a decision-
      quality HITL question for the human.
 
 Drafted-action rules - draft EVERY action that belongs to the
