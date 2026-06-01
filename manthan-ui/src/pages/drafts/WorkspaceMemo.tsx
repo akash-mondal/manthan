@@ -12,13 +12,14 @@
  * fabricated data.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, Send } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { SourceIcon } from "@/components/ui/SourceIcon";
 import { getSource } from "@/lib/sources";
 import { useCaseEvents, type CaseEvent } from "@/lib/useCaseEvents";
-import { approveCase, chatWithCase } from "@/lib/api";
+import { approveCase, denyCase, escalateCase, holdCase } from "@/lib/api";
 import { ApprovalCinematic } from "@/components/app/workspace/ApprovalCinematic";
 import type { WorkspaceAction } from "@/components/app/workspace/types";
 import {
@@ -107,12 +108,15 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
     isCaseTerminal ? "fired" : "awaiting",
   );
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [verdictPending, setVerdictPending] = useState<
+    null | "deny" | "hold" | "escalate"
+  >(null);
+  const [verdictError, setVerdictError] = useState<string | null>(null);
+
+  const navigate = useNavigate();
 
   // Brief ↔ Coral toggle.
   const [mode, setMode] = useState<"prose" | "coral">("prose");
-
-  // Chat drawer (slides in from the right).
-  const [chatOpen, setChatOpen] = useState(false);
 
   const { events, isComplete } = useCaseEvents(caseId);
   const coralSteps = useMemo(() => collectCoralSteps(events), [events]);
@@ -159,6 +163,30 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
     // case_closed lands.
   }
 
+  // Escalate / Hold / Deny - the three operator overrides on the brief.
+  // Each one calls its own API, refetches the case, then bounces the
+  // operator back to the inbox so the row visibly leaves "Active".
+  async function handleVerdict(verdict: "deny" | "hold" | "escalate") {
+    if (verdictPending) return;
+    setVerdictPending(verdict);
+    setVerdictError(null);
+    try {
+      if (verdict === "deny") {
+        await denyCase(caseId, "Denied by operator from the brief");
+      } else if (verdict === "hold") {
+        await holdCase(caseId);
+      } else {
+        await escalateCase(caseId);
+      }
+      onActionsExecuted?.();
+      navigate("/app");
+    } catch (e) {
+      console.warn(`manthan: ${verdict} failed`, e);
+      setVerdictError((e as Error).message ?? `${verdict} failed`);
+      setVerdictPending(null);
+    }
+  }
+
   const phaseLabel =
     state === "fired"
       ? "All actions fired"
@@ -197,9 +225,6 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
           onToggleMode={() =>
             setMode((m) => (m === "prose" ? "coral" : "prose"))
           }
-          showChatToggle
-          chatOpen={chatOpen}
-          onToggleChat={() => setChatOpen((v) => !v)}
         />
 
         <div className="relative flex-1 min-h-0">
@@ -219,6 +244,9 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
                 state={state}
                 onApprove={handleApprove}
                 approveError={approveError}
+                onVerdict={handleVerdict}
+                verdictPending={verdictPending}
+                verdictError={verdictError}
               />
             ) : (
               <CoralCanvas
@@ -253,37 +281,6 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
             )}
           </AnimatePresence>
 
-          {/* Side chat drawer - Claude-mobile style. Floats over the
-              right edge of the workspace canvas so the brief stays in
-              its native 2-column layout underneath; a soft fade on the
-              left edge of the drawer reads as "this is in front." */}
-          {/* Side chat drawer - Claude-mobile-style. Mounted only when
-              open; we skip framer-motion here (got stuck mid-animation
-              in this preview setup) and use a plain CSS transition for
-              the slide-in. */}
-          <aside
-            style={{
-              width: 420,
-              borderLeft: "1px solid var(--color-rule)",
-              background: "#1a1816",
-              boxShadow: "-22px 0 38px rgba(0,0,0,0.50)",
-              transform: chatOpen ? "translateX(0)" : "translateX(440px)",
-              opacity: chatOpen ? 1 : 0,
-              pointerEvents: chatOpen ? "auto" : "none",
-              transition:
-                "transform 280ms cubic-bezier(0.22,0.61,0.36,1), opacity 200ms ease",
-            }}
-            className="absolute top-0 right-0 bottom-0 flex flex-col z-20"
-            aria-hidden={!chatOpen}
-          >
-            {chatOpen && (
-              <ChatDrawer
-                caseId={caseId}
-                events={events}
-                onClose={() => setChatOpen(false)}
-              />
-            )}
-          </aside>
         </div>
       </div>
     </div>
@@ -301,9 +298,6 @@ function HeaderStrip({
   showCoralToggle,
   mode,
   onToggleMode,
-  showChatToggle,
-  chatOpen,
-  onToggleChat,
 }: {
   caseData: MemoCaseData;
   phaseLabel: string;
@@ -311,9 +305,6 @@ function HeaderStrip({
   showCoralToggle: boolean;
   mode: "prose" | "coral";
   onToggleMode: () => void;
-  showChatToggle: boolean;
-  chatOpen: boolean;
-  onToggleChat: () => void;
 }) {
   return (
     <header
@@ -390,10 +381,6 @@ function HeaderStrip({
           <CoralToggle mode={mode} onToggle={onToggleMode} />
         )}
 
-        {showChatToggle && (
-          <ChatHeaderToggle open={chatOpen} onToggle={onToggleChat} />
-        )}
-
         <span
           className="text-[12.5px] uppercase"
           style={{
@@ -421,6 +408,9 @@ function BriefCanvas({
   state,
   onApprove,
   approveError,
+  onVerdict,
+  verdictPending,
+  verdictError,
 }: {
   caseData: MemoCaseData;
   findings: MemoFinding[];
@@ -429,6 +419,9 @@ function BriefCanvas({
   state: "awaiting" | "firing" | "fired";
   onApprove: () => void;
   approveError?: string | null;
+  onVerdict: (verdict: "deny" | "hold" | "escalate") => void;
+  verdictPending: null | "deny" | "hold" | "escalate";
+  verdictError: string | null;
 }) {
   const isClosed = state === "fired";
   return (
@@ -674,23 +667,50 @@ function BriefCanvas({
           {isClosed ? (
             <ClosedCaseFooter actions={workspaceActions} />
           ) : (
-            <div className="flex items-center gap-5">
-              {(["Escalate", "Hold", "Deny"] as const).map((verb) => (
-                <button
-                  key={verb}
-                  type="button"
-                  className="text-[13.5px] outline-none hover:opacity-80 transition-opacity bg-transparent border-0 p-0"
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-5">
+                {(["Escalate", "Hold", "Deny"] as const).map((verb) => {
+                  const key = verb.toLowerCase() as "deny" | "hold" | "escalate";
+                  const pending = verdictPending === key;
+                  const disabled = verdictPending !== null;
+                  return (
+                    <button
+                      key={verb}
+                      type="button"
+                      onClick={() => onVerdict(key)}
+                      disabled={disabled}
+                      className="text-[13.5px] outline-none hover:opacity-80 transition-opacity bg-transparent border-0 p-0 inline-flex items-center gap-1.5"
+                      style={{
+                        color:
+                          verb === "Deny"
+                            ? "var(--color-danger)"
+                            : "var(--color-ink-muted)",
+                        cursor: disabled ? "default" : "pointer",
+                        opacity: disabled && !pending ? 0.4 : 1,
+                      }}
+                    >
+                      {pending && (
+                        <Loader2 size={11} strokeWidth={2.2} className="animate-spin" />
+                      )}
+                      {verb}
+                    </button>
+                  );
+                })}
+              </div>
+              {verdictError && (
+                <span
+                  className="text-[11px]"
                   style={{
-                    color:
-                      verb === "Deny"
-                        ? "var(--color-danger)"
-                        : "var(--color-ink-muted)",
-                    cursor: "pointer",
+                    fontFamily: "Geist Mono, ui-monospace, monospace",
+                    color: "var(--color-danger)",
+                    letterSpacing: "0.02em",
+                    maxWidth: 320,
                   }}
+                  title={verdictError}
                 >
-                  {verb}
-                </button>
-              ))}
+                  {verdictError}
+                </span>
+              )}
             </div>
           )}
           <div className="flex flex-col items-end gap-2">
@@ -1599,586 +1619,3 @@ function ApproveButton({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// ChatDrawer - Claude-mobile-style side panel.
-//
-// Lives next to the brief (not inside it). Slides in from the right when
-// the operator taps the chat toggle in the HeaderStrip. Shows the
-// human_followup / agent_thinking / agent_reply timeline as a flowing
-// conversation and pins an ASK input at the bottom. Mounts only when
-// caseId is provided + chat is open (the parent gates this).
-//
-// Chat backend is unchanged: POST /api/cases/{id}/chat appends a
-// human_followup event, flips the case to investigating, the chat_loop
-// worker runs the agent (same tools / Coral access), and the reply
-// streams back as agent_reply over SSE.
-// ──────────────────────────────────────────────────────────────────────
-
-interface ChatTurn {
-  seq: number;
-  kind: "you" | "thinking" | "manthan";
-  text: string;
-  /** Optional millis to show next to the agent's reply. */
-  elapsedMs?: number;
-}
-
-function collectChatTurns(events: CaseEvent[]): ChatTurn[] {
-  // Walk in seq order, keeping only the conversation events. Collapse
-  // any agent_thinking that precedes an agent_reply (we only need a
-  // spinner when thinking is the most-recent event).
-  const turns: ChatTurn[] = [];
-  for (const e of events) {
-    if (e.type === "human_followup") {
-      const message = (e.data as { message?: string }).message ?? "";
-      turns.push({ seq: e.seq, kind: "you", text: String(message) });
-    } else if (e.type === "agent_thinking") {
-      turns.push({ seq: e.seq, kind: "thinking", text: "" });
-    } else if (e.type === "agent_reply") {
-      const text = String((e.data as { text?: string }).text ?? "");
-      const ms = (e.data as { elapsed_ms?: number }).elapsed_ms;
-      turns.push({
-        seq: e.seq,
-        kind: "manthan",
-        text,
-        elapsedMs: typeof ms === "number" ? ms : undefined,
-      });
-      // Drop any standalone "thinking" that sits immediately before this
-      // reply - once we have an answer the spinner is noise.
-      for (let i = turns.length - 2; i >= 0; i--) {
-        const t = turns[i];
-        if (t.kind === "thinking") {
-          turns.splice(i, 1);
-          continue;
-        }
-        break;
-      }
-    }
-  }
-  return turns;
-}
-
-/** Header toggle button - sits in the HeaderStrip beside CoralToggle. */
-function ChatHeaderToggle({
-  open,
-  onToggle,
-}: {
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-pressed={open}
-      title={open ? "Close chat" : "Talk to Manthan about this case"}
-      className="inline-flex items-center gap-2 outline-none transition-opacity"
-      style={{
-        background: "transparent",
-        border: "none",
-        cursor: "pointer",
-        padding: "4px 8px 4px 4px",
-        borderRadius: 4,
-      }}
-    >
-      <span
-        className="inline-flex items-center justify-center"
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: 4,
-          background: open ? "var(--color-accent-soft)" : "var(--color-rule-soft)",
-          border: open
-            ? "1px solid var(--color-accent-line)"
-            : "1px solid var(--color-rule-soft)",
-          transition: "all 160ms ease",
-        }}
-      >
-        {/* Speech-bubble glyph - minimal, no heavy weight. */}
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 16 16"
-          fill="none"
-          aria-hidden
-        >
-          <path
-            d="M2 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6.5L4 14.5V12a2 2 0 0 1-2-2V4Z"
-            stroke={open ? "var(--color-accent)" : "var(--color-ink-muted)"}
-            strokeWidth="1.2"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
-      <span
-        className="text-[11px] uppercase tabular-nums"
-        style={{
-          color: open
-            ? "var(--color-accent, #56cf83)"
-            : "var(--color-ink-faint)",
-          letterSpacing: "0.18em",
-          fontWeight: 500,
-        }}
-      >
-        ask
-      </span>
-    </button>
-  );
-}
-
-function ChatDrawer({
-  caseId,
-  events,
-  onClose,
-}: {
-  caseId: string;
-  events: CaseEvent[];
-  onClose: () => void;
-}) {
-  const turns = useMemo(() => collectChatTurns(events), [events]);
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  // Auto-scroll to the newest turn when one lands.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [turns.length]);
-
-  const hasTurns = turns.length > 0;
-  const liveThinking = hasTurns && turns[turns.length - 1].kind === "thinking";
-
-  async function send(e: React.FormEvent) {
-    e.preventDefault();
-    const v = text.trim();
-    if (!v || sending) return;
-    setSending(true);
-    try {
-      await chatWithCase(caseId, v);
-      setText("");
-    } catch (err) {
-      console.error("chat send failed", err);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <>
-      {/* Drawer header - minimal, identifies the panel + close button. */}
-      <header
-        className="shrink-0 flex items-center px-6"
-        style={{
-          height: 56,
-          borderBottom: "1px solid var(--color-rule-soft)",
-        }}
-      >
-        <span
-          className="font-mono text-[12px] uppercase"
-          style={{
-            color: "var(--color-ink-muted)",
-            letterSpacing: "0.18em",
-          }}
-        >
-          Manthan
-        </span>
-        <span
-          className="ml-3 text-[12px]"
-          style={{
-            color: "var(--color-ink-faint)",
-            fontFamily: "Spectral, serif",
-            fontStyle: "italic",
-          }}
-        >
-          on this case
-        </span>
-        {liveThinking && (
-          <span
-            className="ml-3 inline-flex items-center gap-1.5 text-[11px] uppercase"
-            style={{
-              color: "var(--color-accent)",
-              letterSpacing: "0.16em",
-            }}
-          >
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={{
-                background: "var(--color-accent)",
-                animation: "pulse-soft 1.2s ease-in-out infinite",
-              }}
-            />
-            thinking
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close chat"
-          className="ml-auto inline-flex items-center justify-center outline-none transition-opacity hover:opacity-80"
-          style={{
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--color-ink-muted)",
-            padding: 4,
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M4 4l8 8M12 4l-8 8"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </header>
-
-      {/* Conversation list - scrollable. Empty state nudges the operator
-          with a single italic prompt, Claude-mobile style. */}
-      <div
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-6 py-6"
-      >
-        {hasTurns ? (
-          <ol className="space-y-6">
-            <AnimatePresence initial={false}>
-              {turns.map((t) => (
-                <motion.li
-                  key={t.seq}
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18 }}
-                >
-                  <ChatTurnRow turn={t} />
-                </motion.li>
-              ))}
-            </AnimatePresence>
-          </ol>
-        ) : (
-          <div className="h-full flex flex-col items-start justify-center gap-3 pr-2">
-            <span
-              className="text-[11.5px] uppercase"
-              style={{
-                color: "var(--color-ink-faint)",
-                letterSpacing: "0.20em",
-                fontFamily: "Geist Mono, ui-monospace, monospace",
-              }}
-            >
-              Ask Manthan
-            </span>
-            <p
-              className="text-[17px] leading-[1.45]"
-              style={{
-                color: "var(--color-ink-muted)",
-                fontFamily: "Spectral, serif",
-                fontStyle: "normal",
-              }}
-            >
-              Push back on the call, ask for a re-check, or rewrite an
-              action. Manthan has the same tools that drafted the brief.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Bottom-pinned ASK input - Claude-mobile rounded pill, monochrome. */}
-      <form
-        onSubmit={send}
-        className="shrink-0 px-5 pt-3 pb-5"
-        style={{ borderTop: "1px solid var(--color-rule-soft)" }}
-      >
-        <div
-          className="flex items-center gap-2 px-4 py-2.5"
-          style={{
-            background: "var(--color-rule-soft)",
-            border: "1px solid var(--color-rule)",
-            borderRadius: 999,
-          }}
-        >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={
-              liveThinking
-                ? "Manthan is thinking…"
-                : hasTurns
-                  ? "Reply to Manthan"
-                  : "Ask Manthan a question…"
-            }
-            disabled={sending || liveThinking}
-            className="flex-1 bg-transparent text-[15px] outline-none min-w-0"
-            style={{
-              color: "var(--color-ink-strong)",
-              fontFamily: "Spectral, serif",
-            }}
-          />
-          <button
-            type="submit"
-            disabled={!text.trim() || sending || liveThinking}
-            aria-label="Send"
-            className="inline-flex items-center justify-center outline-none transition-opacity disabled:opacity-30"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 999,
-              background: text.trim()
-                ? "var(--color-accent, #56cf83)"
-                : "var(--color-rule-soft)",
-              color: text.trim() ? "#0a0a0a" : "var(--color-ink-muted)",
-              border: "none",
-              cursor: text.trim() && !sending ? "pointer" : "default",
-              transition: "background 160ms ease",
-            }}
-          >
-            {sending ? (
-              <Loader2 size={14} strokeWidth={2.5} className="animate-spin" />
-            ) : (
-              <Send size={13} strokeWidth={2.4} />
-            )}
-          </button>
-        </div>
-      </form>
-    </>
-  );
-}
-
-function ChatTurnRow({ turn }: { turn: ChatTurn }) {
-  if (turn.kind === "you") {
-    return (
-      <div className="grid gap-3" style={{ gridTemplateColumns: "70px 1fr" }}>
-        <div
-          className="text-[11.5px] uppercase pt-1"
-          style={{
-            color: "var(--color-ink-faint)",
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            letterSpacing: "0.18em",
-          }}
-        >
-          You
-        </div>
-        <div
-          className="text-[15.5px] leading-[1.55]"
-          style={{
-            color: "var(--color-ink)",
-            fontFamily: "Spectral, serif",
-          }}
-        >
-          {turn.text}
-        </div>
-      </div>
-    );
-  }
-  if (turn.kind === "thinking") {
-    return (
-      <div className="grid gap-3" style={{ gridTemplateColumns: "70px 1fr" }}>
-        <div
-          className="text-[11.5px] uppercase pt-1"
-          style={{
-            color: "var(--color-accent)",
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            letterSpacing: "0.18em",
-          }}
-        >
-          Manthan
-        </div>
-        <div
-          className="text-[13.5px] inline-flex items-center gap-2.5 italic pt-1"
-          style={{
-            color: "var(--color-ink-muted)",
-            fontFamily: "Spectral, serif",
-          }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full"
-            style={{
-              background: "var(--color-accent)",
-              animation: "pulse-soft 1.2s ease-in-out infinite",
-            }}
-          />
-          thinking…
-        </div>
-      </div>
-    );
-  }
-  // manthan reply
-  return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: "70px 1fr" }}>
-      <div className="pt-1">
-        <div
-          className="text-[11.5px] uppercase"
-          style={{
-            color: "var(--color-accent)",
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            letterSpacing: "0.18em",
-          }}
-        >
-          Manthan
-        </div>
-        {turn.elapsedMs != null && (
-          <div
-            className="text-[10.5px] tabular-nums mt-1"
-            style={{
-              color: "var(--color-ink-ghost)",
-              fontFamily: "Geist Mono, ui-monospace, monospace",
-              letterSpacing: "0.06em",
-            }}
-          >
-            {(turn.elapsedMs / 1000).toFixed(1)}s
-          </div>
-        )}
-      </div>
-      <div
-        className="text-[15.5px] leading-[1.62] space-y-3"
-        style={{
-          color: "var(--color-ink-strong)",
-          fontFamily: "Spectral, serif",
-        }}
-      >
-        <MarkdownText text={turn.text} />
-      </div>
-    </div>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// MarkdownText - light-weight inline formatter.
-//
-// The agent_reply text is plain English with a small number of
-// conventions we want to surface visually:
-//   - `\n\n` separates paragraphs
-//   - lines starting with "- " or "* " become bullet items inside the
-//     surrounding paragraph
-//   - `**bold**` runs
-//   - backtick `code` runs (monospace, faint background)
-//   - `[N]` citation refs (small monospace chip)
-//
-// We deliberately avoid a real markdown library - the agent's output is
-// constrained enough that a 60-line tokeniser hits everything we need
-// and keeps the visual language consistent with the rest of the memo.
-// ──────────────────────────────────────────────────────────────────────
-
-function MarkdownText({ text }: { text: string }) {
-  // Split into paragraphs on blank lines.
-  const paragraphs = text
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  return (
-    <>
-      {paragraphs.map((para, i) => {
-        // If the paragraph is a bullet list, render as a list.
-        const lines = para.split(/\n/).map((l) => l.trim()).filter(Boolean);
-        const isList =
-          lines.length > 1 && lines.every((l) => /^[-*]\s+/.test(l));
-        if (isList) {
-          return (
-            <ul key={i} className="space-y-1.5 pl-4">
-              {lines.map((line, j) => (
-                <li
-                  key={j}
-                  className="relative"
-                  style={{ color: "var(--color-ink)" }}
-                >
-                  <span
-                    aria-hidden
-                    className="absolute"
-                    style={{
-                      left: -12,
-                      top: "0.55em",
-                      width: 4,
-                      height: 4,
-                      borderRadius: 999,
-                      background: "var(--color-ink-ghost)",
-                    }}
-                  />
-                  <InlineRich text={line.replace(/^[-*]\s+/, "")} />
-                </li>
-              ))}
-            </ul>
-          );
-        }
-        return (
-          <p key={i}>
-            <InlineRich text={para.replace(/\n/g, " ")} />
-          </p>
-        );
-      })}
-    </>
-  );
-}
-
-/**
- * InlineRich - handles **bold**, `code`, [N] in a single pass.
- *
- * A single regex captures all three patterns; the matched groups tell us
- * which kind it is. Everything between matches is plain text.
- */
-function InlineRich({ text }: { text: string }) {
-  // Capture groups: 1=bold contents, 2=code contents, 3=citation number.
-  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[(\d+)\]/g;
-  const out: React.ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let key = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) {
-      out.push(text.slice(last, m.index));
-    }
-    if (m[1] !== undefined) {
-      out.push(
-        <strong
-          key={key++}
-          style={{ color: "var(--color-ink-strong)", fontWeight: 600 }}
-        >
-          {m[1]}
-        </strong>,
-      );
-    } else if (m[2] !== undefined) {
-      out.push(
-        <code
-          key={key++}
-          className="px-1.5 py-0.5 mx-0.5"
-          style={{
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            fontSize: "0.88em",
-            background: "var(--color-rule-soft)",
-            border: "1px solid var(--color-rule-soft)",
-            borderRadius: 3,
-            color: "var(--color-ink)",
-          }}
-        >
-          {m[2]}
-        </code>,
-      );
-    } else if (m[3] !== undefined) {
-      out.push(
-        <span
-          key={key++}
-          className="inline-flex items-baseline px-1.5 py-0.5 mx-0.5 tabular-nums align-baseline"
-          style={{
-            fontFamily: "Geist Mono, ui-monospace, monospace",
-            fontSize: "0.78em",
-            background: "var(--color-rule-soft)",
-            border: "1px solid var(--color-rule)",
-            borderRadius: 3,
-            color: "var(--color-ink)",
-          }}
-        >
-          [{m[3]}]
-        </span>,
-      );
-    }
-    last = re.lastIndex;
-  }
-  if (last < text.length) {
-    out.push(text.slice(last));
-  }
-  return <>{out}</>;
-}
-
-// AnimatePresence is exported above; suppress the unused import warning
-// while still keeping the option open for the future expand animations.
-void AnimatePresence;
