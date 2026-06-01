@@ -781,23 +781,33 @@ function CenterModal({ children }: { children: React.ReactNode }) {
 }
 
 function FloatingTip({ children }: { children: React.ReactNode }) {
+  // Bottom-left pin so the SURFACING / IN-FLIGHT trace column on the
+  // right side of the case workspace stays fully clickable. Slim card
+  // (280px), reduced opacity at rest so it doesn't compete with the
+  // investigation streaming above it. Hover brings it back to full.
   return (
     <div
       style={{
         position: "fixed",
-        top: 20,
-        right: 20,
+        bottom: 20,
+        left: 20,
         zIndex: 9000,
-        width: 340,
-        background: "#15171a",
+        width: 300,
+        background: "rgba(21,23,26,0.92)",
         border: "1px solid rgba(255,255,255,0.10)",
         borderRadius: 12,
-        padding: "16px",
+        padding: "14px",
         color: "#efece4",
         fontFamily:
           'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
         boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
+        opacity: 0.85,
+        transition: "opacity 160ms ease",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
       }}
+      onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+      onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.85")}
     >
       {children}
     </div>

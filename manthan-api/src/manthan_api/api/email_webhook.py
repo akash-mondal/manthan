@@ -242,31 +242,68 @@ async def receive_email(
             f"Subject: {subject}\n\n{text[:2000]}"
         )
 
+        # Demo-v2 hookup: when an inbound email matches the seeded demo
+        # template (Caldera Pro duplicate-charge complaint), graft the
+        # Maya scenario's Stripe IDs into the trigger_payload so the
+        # agent has real seeded records to investigate against. Without
+        # this, the agent looks up the sender's email in Stripe, finds
+        # nothing (their address isn't a seeded customer), and stalls.
+        # customer_ref stays the user's actual email so the auto-ack +
+        # the agent's reply both land in their inbox.
+        demo_hookup = _maybe_demo_graft(subject, text)
+
+        payload_dict: dict[str, Any] = {
+            "message_id": msg_id,
+            "from_addr": from_addr,
+            "from_name": from_name,
+            "subject": subject,
+            "received_at": email_data.get("received_at"),
+            "raw_text": text,
+            "raw_html": html_body[:50000] if html_body else None,
+        }
+        if demo_hookup:
+            payload_dict.update(demo_hookup)
+            # Enrich the trigger_text so the agent sees the resolved
+            # context in the same single block - this is what get
+            # serialised into the case_opened event the agent reads.
+            trigger_text += (
+                "\n\n-- demo-v2 enrichment (auto-attached by inbound handler) --\n"
+                f"Resolved customer: {demo_hookup['customer_id']}\n"
+                f"Original charge:   {demo_hookup['original_charge_id']}  ($89, succeeded)\n"
+                f"Duplicate charge:  {demo_hookup['duplicate_charge_id']}  ($89, succeeded - refund this one)"
+            )
+
         async with conn.transaction():
             new_case = await conn.fetchrow(
                 """
                 INSERT INTO cases (
                     org_id, thread_id, short_id, status, trigger_surface,
-                    trigger_payload, case_type, customer_ref
+                    trigger_payload, case_type, customer_ref, amount_minor, currency
                 )
                 VALUES ($1, $2, $3, 'investigating', 'inbound_email',
-                        $4, $5, $6)
+                        $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
                 org_id, thread_id, short_id,
-                json.dumps({
-                    "message_id": msg_id,
-                    "from_addr": from_addr,
-                    "from_name": from_name,
-                    "subject": subject,
-                    "received_at": email_data.get("received_at"),
-                    "raw_text": text,
-                    "raw_html": html_body[:50000] if html_body else None,
-                }),
+                json.dumps(payload_dict),
                 "refund_request",  # default; investigation may refine
                 from_addr,
+                8900 if demo_hookup else None,
+                "usd" if demo_hookup else None,
             )
             case_id = new_case["id"]
+            event_data: dict[str, Any] = {
+                "case_id": str(case_id),
+                "short_id": short_id,
+                "trigger_surface": "inbound_email",
+                "trigger_text": trigger_text,
+                "from_addr": from_addr,
+                "from_name": from_name,
+                "subject": subject,
+                "message_id": msg_id,
+            }
+            if demo_hookup:
+                event_data.update(demo_hookup)
             await conn.execute(
                 """
                 INSERT INTO events (org_id, thread_id, seq, type, actor, data)
@@ -274,16 +311,7 @@ async def receive_email(
                 """,
                 org_id, thread_id,
                 f"email:{from_addr}",
-                json.dumps({
-                    "case_id": str(case_id),
-                    "short_id": short_id,
-                    "trigger_surface": "inbound_email",
-                    "trigger_text": trigger_text,
-                    "from_addr": from_addr,
-                    "from_name": from_name,
-                    "subject": subject,
-                    "message_id": msg_id,
-                }),
+                json.dumps(event_data),
             )
 
     logger.info("email opened case %s from=%s subject=%r", short_id, from_addr, subject[:60])
@@ -408,3 +436,49 @@ def _verify_svix(body: bytes, headers: dict[str, str], secret: str) -> bool:
 def _b64(data: bytes) -> str:
     from base64 import b64encode
     return b64encode(data).decode()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Demo v2 inbound enrichment
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _maybe_demo_graft(subject: str, body: str) -> dict[str, Any] | None:
+    """If this inbound matches the demo-v2 email template, return the
+    seeded Stripe IDs the agent will need to do a real investigation.
+
+    The demo's template asks the user to send "Charged twice for my
+    Caldera Pro subscription" with a $89 dupe charge claim. Seeded Coral
+    data has a matching customer (cus_UbF7BXDTnXgUCt) + the two charges
+    (original ch_3Tc2dRC…/dupe ch_3Tc2dTC…) from the Maya scenario. When
+    we recognise the demo language, we attach those ids onto the new
+    case's trigger_payload so the agent can SELECT against real records
+    instead of failing the customer lookup by the user's personal email.
+
+    The reply still goes to the user's own address because we don't
+    touch customer_ref - the auto-ack + outbound `customer_email` action
+    both read it from there.
+
+    Returns None for any inbound that isn't the demo template; the
+    handler then opens a regular EML- case.
+    """
+    if not (subject or body):
+        return None
+    blob = f"{subject}\n{body}".lower()
+    # Two markers must both hit for us to graft - "caldera pro" alone
+    # could be a real future customer; pairing it with the demo's
+    # specific duplicate-charge claim keeps the false-positive risk
+    # low.
+    if "caldera pro" not in blob:
+        return None
+    if not any(
+        token in blob
+        for token in ("charged twice", "duplicate", "two charges", "double charged")
+    ):
+        return None
+    return {
+        "demo_v2": True,
+        "customer_id": "cus_UbF7BXDTnXgUCt",
+        "original_charge_id": "ch_3Tc2dRCNe0SBMhzI1z6GoLeI",
+        "duplicate_charge_id": "ch_3Tc2dTCNe0SBMhzI0vIpjd62",
+    }
