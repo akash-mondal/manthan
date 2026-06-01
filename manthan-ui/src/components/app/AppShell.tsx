@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useSearchParams } from "react-router-dom";
 import {
   ChevronsUpDown,
   LogOut,
@@ -27,10 +27,13 @@ import { cn } from "@/lib/cn";
 import { DemoTriggerMenu } from "@/components/app/DemoTriggerMenu";
 import { Logo } from "@/components/Logo";
 import { useTheme } from "@/lib/theme";
+import { DemoV2Wizard } from "@/components/demo-v2/DemoV2Wizard";
+import { loadState as loadDemoV2State } from "@/lib/demo-v2";
 
 export function AppShell() {
   const metrics = useDashboardMetrics();
   const me = useMe();
+  const demoV2 = useDemoV2Active(me);
 
   return (
     <div
@@ -82,8 +85,53 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {demoV2.active && me?.member.email && (
+        <DemoV2Wizard
+          loggedInEmail={me.member.email}
+          onClose={demoV2.dismiss}
+        />
+      )}
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Demo v2 mount controller. Returns active=true when ANY of:
+//   - URL has `?demo=v2` (explicit launch)
+//   - localStorage has a non-stale saved session (resume after refresh)
+// dismiss() clears both signals.
+// ──────────────────────────────────────────────────────────────────────
+
+function useDemoV2Active(me: MeResponse | null): {
+  active: boolean;
+  dismiss: () => void;
+} {
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const [hasSavedState, setHasSavedState] = useState<boolean>(() => {
+    return loadDemoV2State() !== null;
+  });
+
+  // Re-check saved state on route change - if the wizard wrote /
+  // cleared its own state, we want to reflect that without a refresh.
+  useEffect(() => {
+    setHasSavedState(loadDemoV2State() !== null);
+  }, [location.pathname]);
+
+  const urlFlag = params.get("demo") === "v2";
+  const active = !!me?.member.email && (urlFlag || hasSavedState);
+
+  const dismiss = () => {
+    if (urlFlag) {
+      const next = new URLSearchParams(params);
+      next.delete("demo");
+      setParams(next, { replace: true });
+    }
+    setHasSavedState(false);
+  };
+
+  return { active, dismiss };
 }
 
 // ──────────────────────────────────────────────────────────────────────

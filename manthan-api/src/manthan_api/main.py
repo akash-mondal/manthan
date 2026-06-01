@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 from manthan_api import __version__
 from manthan_api.api import (
-    actions, audit, cases, chat, citations, clerk_webhook, demo,
+    actions, audit, cases, chat, citations, clerk_webhook, demo, demo_v2,
     email_webhook, events, health, inbox, me, memory, metrics, narrative,
     policy, slack, sources, webhooks,
 )
@@ -88,6 +88,7 @@ app.include_router(clerk_webhook.router)
 app.include_router(policy.router)
 app.include_router(audit.router)
 app.include_router(demo.router)
+app.include_router(demo_v2.router)
 app.include_router(sources.router)
 app.include_router(me.router)
 app.include_router(memory.router)

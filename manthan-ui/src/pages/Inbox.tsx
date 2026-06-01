@@ -14,7 +14,7 @@
  * click.
  */
 
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
@@ -1177,6 +1177,8 @@ function InboxEmptyState() {
         </div>
       )}
 
+      <DemoV2EntryChip />
+
       {storyOverlay}
 
       <style>{`
@@ -1408,5 +1410,43 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
     >
       {children}
     </span>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Demo v2 entry chip - tiny, dev-only opt-in for the guided autonomous-
+// email tour. The full wizard lives in components/demo-v2/DemoV2Wizard
+// and is gated separately by the `?demo=v2` URL param so even if this
+// chip is hidden the wizard is still reachable by URL during testing.
+// ──────────────────────────────────────────────────────────────────────
+
+function DemoV2EntryChip() {
+  const [, setParams] = useSearchParams();
+  const handleStart = () => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("demo", "v2");
+      return next;
+    });
+  };
+  return (
+    <button
+      onClick={handleStart}
+      style={{
+        marginTop: 18,
+        background: "transparent",
+        color: "var(--color-ink-faint)",
+        border: "1px dashed rgba(120,120,120,0.35)",
+        borderRadius: 999,
+        padding: "8px 14px",
+        fontFamily: "Geist Mono, ui-monospace, monospace",
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        cursor: "pointer",
+      }}
+    >
+      Demo v2 · autonomous email · guided
+    </button>
   );
 }

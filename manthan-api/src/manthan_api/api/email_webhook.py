@@ -129,12 +129,41 @@ async def receive_email(
     if not from_addr:
         raise HTTPException(status_code=400, detail="missing from address")
 
-    # Resolve org.
+    # Resolve org. Two-step rule:
+    #   1. If the sender email matches a `members` row in any org, route
+    #      the case INTO that org. This is how multi-tenant routing
+    #      works when we hold one Resend inbound mailbox shared across
+    #      all signed-in users - each user's personal org is identified
+    #      by the email they signed up with.
+    #   2. Otherwise fall back to the org named by the URL slug
+    #      (typically `acme` - the seeded demo / shared org).
     async with get_conn() as conn:
-        org_row = await conn.fetchrow("SELECT id FROM orgs WHERE slug = $1", org_slug)
-        if org_row is None:
-            raise HTTPException(status_code=404, detail="org not found")
-        org_id = org_row["id"]
+        member_match = await conn.fetchrow(
+            """
+            SELECT o.id AS org_id, o.slug AS org_slug
+            FROM members m
+            JOIN orgs o ON o.id = m.org_id
+            WHERE lower(m.email) = $1
+            ORDER BY m.created_at ASC
+            LIMIT 1
+            """,
+            from_addr,
+        )
+        if member_match is not None:
+            org_id = member_match["org_id"]
+            logger.info(
+                "email routed to member's own org: from=%s org=%s",
+                from_addr, member_match["org_slug"],
+            )
+        else:
+            org_row = await conn.fetchrow("SELECT id FROM orgs WHERE slug = $1", org_slug)
+            if org_row is None:
+                raise HTTPException(status_code=404, detail="org not found")
+            org_id = org_row["id"]
+            logger.info(
+                "email routed via URL slug (sender not a member): from=%s org=%s",
+                from_addr, org_slug,
+            )
 
         # Dedupe by message_id (defensive - Resend usually doesn't
         # redeliver, but the SLA contract says we never double-process).

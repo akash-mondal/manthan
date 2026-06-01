@@ -134,7 +134,7 @@ export function getApiUserEmail(): string | null {
   return API_USER_EMAIL;
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Manthan-Dev-Org": DEV_ORG_SLUG,
