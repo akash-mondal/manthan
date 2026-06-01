@@ -133,6 +133,30 @@ look up specifics. If a column you SELECTed comes back NULL, it may not
 be populated in the source - try a different column or a different
 table. The error and result messages are your map.
 
+Source-plugin quirks worth knowing up front:
+
+  - notion.pages REQUIRES `WHERE page_id = '<uuid>'`. Don't try to
+    full-text-scan it. Use `notion.search` to DISCOVER page ids first:
+      SELECT id FROM notion.search WHERE query = 'pro-rata' LIMIT 5
+    Notion's search is a single FULL-TEXT phrase, NOT a boolean SQL
+    expression. `query = 'refund OR credit OR SLA'` matches the literal
+    string "refund OR credit OR SLA" and returns nothing. Pass ONE
+    short phrase ("pro-rata", "refund policy", "documented incident").
+    Once you have the page_id, fetch the body with notion.pages.
+
+  - posthog.events REQUIRES `WHERE environment_id = '<id>'`. Find the
+    environment_id from `posthog.organizations` or `posthog.organizations`
+    first, then filter events by it + person/event/timestamp.
+
+  - intercom.conversations + zendesk.tickets are keyed by the
+    customer's email. Use the email you got from `stripe.customers`
+    (NOT the operator's login email - that's the dev_email header,
+    not the customer of record).
+
+  - slack.messages requires a channel_id filter. Use `slack.channels`
+    to resolve `name ILIKE '%billing%'` etc. → channel_id, then filter
+    messages by that channel_id.
+
 DISCOVERY PERSISTENCE - when a direct id lookup returns zero rows on
 a table you'd expect to have the record:
   - Real Coral often pages list endpoints at ~10 rows even when you
