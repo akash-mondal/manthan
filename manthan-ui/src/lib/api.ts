@@ -9,18 +9,22 @@
 // VITE_MANTHAN_API_URL="" so fetches go to relative /api/* (same origin),
 // and Caddy reverse-proxies to the local API. With `||`, "" was falsy
 // and we fell back to localhost:8765 from the browser → CORS hellscape.
-// Default depends on build mode:
-//   - dev:  http://127.0.0.1:8765 so `npm run dev` hits a locally-run
-//           uvicorn without needing any .env setup
-//   - prod: same-origin (empty string -> relative fetches like
-//           "/api/me") so the bundle works behind Caddy / any reverse
-//           proxy by default, even when .env.production is missing
-//           (it's gitignored). To send fetches to a separate API
-//           origin (e.g. a Vercel deploy where the API lives on a
-//           different subdomain), set VITE_MANTHAN_API_URL explicitly.
+// Default is ALWAYS same-origin (empty string -> relative fetches like
+// "/api/me"). This is what the production VPS needs (Caddy proxies
+// /api/* to FastAPI on the same host) and is also what `npm run dev`
+// needs (vite.config.ts has a server.proxy that forwards /api -> the
+// local FastAPI).
+//
+// We deliberately do NOT default to "http://127.0.0.1:8765" - that
+// path was a foot-gun: when .env.production was missing (it's
+// gitignored) the build picked localhost and shipped it to the
+// browser, breaking the deployed app with CORS errors.
+//
+// To override (e.g. a Vercel deploy where the API lives on a separate
+// origin), set VITE_MANTHAN_API_URL explicitly via .env.production or
+// VITE_MANTHAN_API_URL=https://api.example.com npm run build.
 const API_URL =
-  (import.meta.env.VITE_MANTHAN_API_URL as string | undefined) ??
-  (import.meta.env.DEV ? "http://127.0.0.1:8765" : "");
+  (import.meta.env.VITE_MANTHAN_API_URL as string | undefined) ?? "";
 
 const DEV_ORG_SLUG =
   (import.meta.env.VITE_MANTHAN_DEV_ORG as string | undefined) || "acme";
