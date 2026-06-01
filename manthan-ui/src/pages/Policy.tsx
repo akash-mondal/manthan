@@ -236,6 +236,7 @@ function PageHeader({
         <button
           type="button"
           onClick={onNewRule}
+          data-tour-target="new-rule-button"
           className="inline-flex items-center gap-1.5 transition-all hover:opacity-95 hover:translate-y-[-1px] outline-none"
           style={{
             background: "var(--color-ink-strong)",

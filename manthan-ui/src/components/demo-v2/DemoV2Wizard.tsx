@@ -1,15 +1,25 @@
-// DemoV2Wizard - the center-modal guided tour for the autonomous-email demo.
+// DemoV2Wizard - guided interactive tour for the autonomous-email
+// flow.
 //
-// Mounted at AppShell level so it overlays any page during the demo.
-// Drives the whole flow: policy seeding -> email instruction ->
-// inbound poll -> auto-execute watch -> outro.
+// Drives the user through the REAL product UI: spotlight the Policies
+// sidebar link, then the New rule button, then each field of the
+// create-rule modal, then back to Inbox, then through the email round-
+// trip. The wizard never fills the form or clicks the buttons for the
+// user - the point is they feel like they're operating the product.
 //
-// Self-contained: holds its own state (synced to localStorage so a
-// tab close mid-flow leaves a resumable session), polls the demo-v2
-// endpoints directly, and navigates between routes via react-router.
+// Each step is either:
+//   - a Spotlight pointing at a real DOM element + tooltip card, or
+//   - a center modal (intro, send-email instruction, waiting countdown,
+//     outro).
+//
+// Steps auto-advance when their wait condition is met:
+//   URL change       (router useLocation)
+//   element appears  (a target selector becomes findable in the DOM)
+//   element state    (input has content, button has data-tour-selected)
+//   API state        (policy-ready, check-inbound)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   CANCELLABLE_STEPS,
@@ -28,13 +38,11 @@ import {
   loadState,
   resetPolicies,
   saveState,
-  seedPolicy,
 } from "@/lib/demo-v2";
+import { Spotlight } from "./Spotlight";
 
 interface DemoV2WizardProps {
-  /** The user's logged-in email (the address we'll verify inbound from). */
   loggedInEmail: string;
-  /** Called when the wizard is dismissed or completed. */
   onClose: () => void;
 }
 
@@ -46,7 +54,6 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
     return loadState() ?? freshState(loggedInEmail);
   });
   const [template, setTemplate] = useState<DemoV2Template | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Persist every state change.
@@ -54,22 +61,20 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
     saveState(state);
   }, [state]);
 
-  // Fetch the canonical template once.
+  // Load the canonical template once. Also wipe any pre-existing
+  // policies so the user gets a clean slate when starting the demo
+  // (they'd be confused by leftover rules from a prior run).
   useEffect(() => {
     let cancelled = false;
     fetchTemplate()
-      .then((t) => {
-        if (!cancelled) setTemplate(t);
-      })
-      .catch((e) => {
-        if (!cancelled) setErrorMsg(`Couldn't load demo template: ${String(e)}`);
-      });
+      .then((t) => !cancelled && setTemplate(t))
+      .catch((e) => !cancelled && setErrorMsg(`Couldn't load demo template: ${String(e)}`));
+    // Best-effort wipe; we don't block the wizard on this.
+    resetPolicies().catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
-
-  // ── Step transitions ────────────────────────────────────────────────
 
   const setStep = useCallback((step: StepId) => {
     setState((prev) => ({ ...prev, step }));
@@ -83,25 +88,97 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
     onClose();
   }, [cancellable, onClose]);
 
-  // ── Step 2 (policy-wipe) auto-effects ───────────────────────────────
-  // When we enter policy-wipe, navigate to /app/policy so the user
-  // sees the policies list change live.
-  useEffect(() => {
-    if (state.step === "policy-wipe" && !location.pathname.startsWith("/app/policy")) {
-      navigate("/app/policy");
-    }
-  }, [state.step, location.pathname, navigate]);
+  // ── DOM polling helper (used by several step wait conditions) ─────
+  const useDomCondition = (predicate: () => boolean, enabled: boolean) => {
+    useEffect(() => {
+      if (!enabled) return;
+      const tick = () => {
+        try {
+          if (predicate()) onAdvance();
+        } catch {
+          /* ignore */
+        }
+      };
+      tick();
+      const id = window.setInterval(tick, 250);
+      return () => window.clearInterval(id);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [enabled, predicate]);
+  };
 
-  // ── Step 5 (waiting-for-email) polling ──────────────────────────────
-  const pollerRef = useRef<number | null>(null);
+  const onAdvance = useCallback(() => {
+    const idx = STEP_ORDER.indexOf(state.step);
+    const next = STEP_ORDER[Math.min(idx + 1, STEP_ORDER.length - 1)];
+    if (next !== state.step) setStep(next);
+  }, [state.step, setStep]);
+
+  // ── Step-specific advance conditions ──────────────────────────────
+
+  // goto-policies: advance when user navigates to /app/policy
   useEffect(() => {
-    if (state.step !== "waiting-for-email") {
-      if (pollerRef.current) {
-        window.clearInterval(pollerRef.current);
-        pollerRef.current = null;
-      }
-      return;
+    if (state.step === "goto-policies" && location.pathname.startsWith("/app/policy")) {
+      onAdvance();
     }
+  }, [state.step, location.pathname, onAdvance]);
+
+  // goto-inbox: advance when user navigates to /app (and only /app)
+  useEffect(() => {
+    if (state.step === "goto-inbox" && location.pathname === "/app") {
+      onAdvance();
+    }
+  }, [state.step, location.pathname, onAdvance]);
+
+  // click-new-rule: advance when the create-rule modal opens (we
+  // detect this by waiting for the Name input to appear in the DOM)
+  useDomCondition(
+    () => !!document.querySelector('[data-tour-target="rule-name-input"]'),
+    state.step === "click-new-rule",
+  );
+
+  // name-rule: advance when the Name input has any content
+  useDomCondition(
+    () => {
+      const el = document.querySelector(
+        '[data-tour-target="rule-name-input"]',
+      ) as HTMLInputElement | null;
+      return !!el && el.value.trim().length > 0;
+    },
+    state.step === "name-rule",
+  );
+
+  // select-auto-mode: advance when the auto-execute button is selected
+  useDomCondition(
+    () => {
+      const el = document.querySelector('[data-tour-target="rule-mode-auto"]');
+      return el?.getAttribute("data-tour-selected") === "true";
+    },
+    state.step === "select-auto-mode",
+  );
+
+  // save-rule: advance when the demo policy actually exists in the DB
+  // (the modal closes too, but polling the API is more reliable - if
+  // the save errored we don't want to advance prematurely).
+  useEffect(() => {
+    if (state.step !== "save-rule") return;
+    let aborted = false;
+    const tick = async () => {
+      try {
+        const r = await checkPolicyReady();
+        if (!aborted && r.ready) onAdvance();
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = window.setInterval(tick, 1500);
+    return () => {
+      aborted = true;
+      window.clearInterval(id);
+    };
+  }, [state.step, onAdvance]);
+
+  // waiting-for-email: poll check-inbound
+  useEffect(() => {
+    if (state.step !== "waiting-for-email") return;
     if (!state.senderEmail || !state.waitingStartedAt) return;
     let aborted = false;
     const tick = async () => {
@@ -118,47 +195,33 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
           }));
         }
       } catch {
-        // transient - try again next tick
+        /* transient */
       }
     };
-    // Fire immediately so the user sees a check happen right away.
     void tick();
-    pollerRef.current = window.setInterval(tick, POLL_INTERVAL_MS);
+    const id = window.setInterval(tick, POLL_INTERVAL_MS);
     return () => {
       aborted = true;
-      if (pollerRef.current) {
-        window.clearInterval(pollerRef.current);
-        pollerRef.current = null;
-      }
+      window.clearInterval(id);
     };
   }, [state.step, state.senderEmail, state.waitingStartedAt]);
 
-  // ── Step 6 (case-opened) navigation + watching ──────────────────────
-  // Once we have a case id, push the operator into the workspace and
-  // listen for the case to reach acting/resolved before advancing.
+  // case-opened: navigate to the case + watch for resolution
   useEffect(() => {
-    if (state.step !== "case-opened") return;
-    if (!state.caseId) return;
+    if (state.step !== "case-opened" || !state.caseId) return;
     const target = `/app/case/${state.caseId}`;
-    if (!location.pathname.startsWith(target)) {
-      navigate(target);
-    }
+    if (!location.pathname.startsWith(target)) navigate(target);
   }, [state.step, state.caseId, location.pathname, navigate]);
 
-  // While in case-opened, poll the case until it's resolved/acting.
-  // Reusing checkInbound (it returns latest status by sender) keeps
-  // this off the SSE plumbing - one fewer thing to debug late at night.
   useEffect(() => {
     if (state.step !== "case-opened") return;
     if (!state.senderEmail || !state.waitingStartedAt) return;
     let aborted = false;
     const tick = async () => {
-      if (aborted) return;
       try {
         const r = await checkInbound(state.senderEmail!, state.waitingStartedAt!);
-        if (aborted) return;
-        if (r.matched && (r.status === "resolved" || r.status === "errored")) {
-          setState((prev) => ({ ...prev, step: "case-resolved" }));
+        if (!aborted && r.matched && (r.status === "resolved" || r.status === "errored")) {
+          setStep("case-resolved");
         }
       } catch {
         /* transient */
@@ -169,62 +232,21 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
       aborted = true;
       window.clearInterval(id);
     };
-  }, [state.step, state.senderEmail, state.waitingStartedAt]);
+  }, [state.step, state.senderEmail, state.waitingStartedAt, setStep]);
 
-  // ── Nav lock (sidebar guard + beforeunload) ─────────────────────────
+  // Nav lock during the watch / wait phases
   useEffect(() => {
     if (!NAV_LOCKED_STEPS.has(state.step)) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-      e.returnValue =
-        "The agent is mid-investigation. Leave anyway?";
+      e.returnValue = "The agent is mid-investigation. Leave anyway?";
       return e.returnValue;
     };
     window.addEventListener("beforeunload", handler);
-    document.body.setAttribute("data-demo-v2-locked", "true");
-    return () => {
-      window.removeEventListener("beforeunload", handler);
-      document.body.removeAttribute("data-demo-v2-locked");
-    };
+    return () => window.removeEventListener("beforeunload", handler);
   }, [state.step]);
 
-  // ── Action handlers (per-step buttons) ──────────────────────────────
-
-  const handleSeedPolicy = useCallback(async () => {
-    setBusy("Setting up the policy…");
-    setErrorMsg(null);
-    try {
-      await resetPolicies();
-      const r = await seedPolicy();
-      if (!r.ready) throw new Error("policy seed did not report ready");
-      setStep("policy-seeded");
-    } catch (e) {
-      setErrorMsg(`Couldn't set up the policy: ${String(e)}`);
-    } finally {
-      setBusy(null);
-    }
-  }, [setStep]);
-
-  const handleConfirmPolicySeeded = useCallback(async () => {
-    // Re-verify so we don't proceed if something blew the rule away
-    // between the seed and the user clicking next.
-    setBusy("Checking policy…");
-    try {
-      const r = await checkPolicyReady();
-      if (!r.ready) {
-        setErrorMsg(
-          "The policy isn't in place anymore - re-seed before continuing.",
-        );
-        setStep("policy-wipe");
-        return;
-      }
-      setStep("send-email");
-    } catch (e) {
-      setErrorMsg(`Couldn't verify the policy: ${String(e)}`);
-    } finally {
-      setBusy(null);
-    }
-  }, [setStep]);
+  // ── Action handlers from the tooltip cards ────────────────────────
 
   const handleSentEmail = useCallback(() => {
     setState((prev) => ({
@@ -234,314 +256,327 @@ export function DemoV2Wizard({ loggedInEmail, onClose }: DemoV2WizardProps) {
     }));
   }, []);
 
+  const handleAbortWaiting = useCallback(() => {
+    setStep("send-email");
+    setState((prev) => ({ ...prev, waitingStartedAt: null }));
+  }, [setStep]);
+
   const handleFinish = useCallback(() => {
     clearState();
     onClose();
     navigate("/app");
   }, [navigate, onClose]);
 
-  // ── Render ──────────────────────────────────────────────────────────
-
-  const progressIdx = STEP_ORDER.indexOf(state.step);
-  const progressTotal = STEP_ORDER.length - 1; // don't count "done"
+  // ── Render ────────────────────────────────────────────────────────
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Manthan demo"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 9000,
-        background: "rgba(8,10,8,0.72)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-        display: "grid",
-        placeItems: "center",
-        padding: "24px",
-      }}
-    >
-      <div
-        style={{
-          width: "min(560px, 100%)",
-          background: "#15171a",
-          border: "1px solid rgba(255,255,255,0.10)",
-          borderRadius: "16px",
-          padding: "28px 28px 22px",
-          color: "#efece4",
-          fontFamily:
-            'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-          boxShadow: "0 30px 80px rgba(0,0,0,0.5)",
-        }}
-      >
-        <DemoHeader
-          step={state.step}
-          progressIdx={progressIdx}
-          progressTotal={progressTotal}
-          cancellable={cancellable}
-          onCancel={handleCancel}
-        />
-
-        {errorMsg && (
-          <div
-            style={{
-              background: "rgba(220,80,80,0.10)",
-              border: "1px solid rgba(220,80,80,0.32)",
-              color: "#ffb3b3",
-              padding: "10px 12px",
-              borderRadius: "10px",
-              fontSize: "13px",
-              marginBottom: "14px",
-            }}
-          >
-            {errorMsg}
-          </div>
-        )}
-
-        <StepBody
-          state={state}
-          template={template}
-          busy={busy}
-          onStartNow={() => setStep("policy-wipe")}
-          onSeedPolicy={handleSeedPolicy}
-          onConfirmPolicySeeded={handleConfirmPolicySeeded}
-          onSentEmail={handleSentEmail}
-          onAbortWaiting={() => {
-            // Allowed escape hatch from the wait if it times out.
-            setStep("send-email");
-            setState((prev) => ({ ...prev, waitingStartedAt: null }));
-          }}
-          onFinish={handleFinish}
-        />
-      </div>
-    </div>
+    <StepRenderer
+      state={state}
+      template={template}
+      errorMsg={errorMsg}
+      cancellable={cancellable}
+      onCancel={handleCancel}
+      onStartNow={() => setStep("goto-policies")}
+      onManualNext={onAdvance}
+      onSentEmail={handleSentEmail}
+      onAbortWaiting={handleAbortWaiting}
+      onFinish={handleFinish}
+    />
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Subcomponents (kept in this file so the wizard is self-contained)
+// Step renderer - picks Spotlight vs CenterModal based on step
 // ──────────────────────────────────────────────────────────────────────
 
-function DemoHeader({
-  step,
-  progressIdx,
-  progressTotal,
-  cancellable,
-  onCancel,
-}: {
-  step: StepId;
-  progressIdx: number;
-  progressTotal: number;
-  cancellable: boolean;
-  onCancel: () => void;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: "18px",
-      }}
-    >
-      <div>
-        <div
-          style={{
-            fontSize: "10px",
-            letterSpacing: "0.16em",
-            color: "rgba(239,236,228,0.45)",
-            textTransform: "uppercase",
-          }}
-        >
-          Manthan · guided demo · step {Math.max(0, progressIdx) + 1} of{" "}
-          {progressTotal}
-        </div>
-        <div style={{ fontSize: "11px", color: "rgba(239,236,228,0.55)" }}>
-          {SHORT_LABELS[step]}
-        </div>
-      </div>
-      {cancellable && (
-        <button
-          onClick={onCancel}
-          style={{
-            background: "transparent",
-            color: "rgba(239,236,228,0.55)",
-            border: "1px solid rgba(255,255,255,0.16)",
-            borderRadius: "8px",
-            padding: "6px 10px",
-            fontSize: "11px",
-            cursor: "pointer",
-          }}
-        >
-          Cancel demo
-        </button>
-      )}
-    </div>
-  );
-}
-
-const SHORT_LABELS: Record<StepId, string> = {
-  intro: "What you're about to see",
-  "policy-wipe": "Set the auto-execute policy",
-  "policy-seeded": "Policy is live",
-  "send-email": "Send a test email",
-  "waiting-for-email": "Waiting for your email",
-  "case-opened": "Watching the agent",
-  "case-resolved": "Resolution",
-  done: "Done",
-};
-
-function StepBody(props: {
+function StepRenderer(props: {
   state: DemoV2State;
   template: DemoV2Template | null;
-  busy: string | null;
+  errorMsg: string | null;
+  cancellable: boolean;
+  onCancel: () => void;
   onStartNow: () => void;
-  onSeedPolicy: () => void;
-  onConfirmPolicySeeded: () => void;
+  onManualNext: () => void;
   onSentEmail: () => void;
   onAbortWaiting: () => void;
   onFinish: () => void;
 }) {
-  const { state, template, busy } = props;
+  const { state, template, errorMsg, cancellable, onCancel } = props;
+  const stepNum = Math.max(0, STEP_ORDER.indexOf(state.step)) + 1;
+  const totalSteps = STEP_ORDER.length - 1; // hide "done" from count
+
+  // Common tooltip wrapper - adds the step number + cancel button
+  const tipFrame = (body: React.ReactNode) => (
+    <>
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.16em",
+          color: "rgba(239,236,228,0.45)",
+          textTransform: "uppercase",
+          marginBottom: 8,
+        }}
+      >
+        Step {stepNum} of {totalSteps}
+      </div>
+      {body}
+      {errorMsg && <ErrorBox>{errorMsg}</ErrorBox>}
+      {cancellable && (
+        <div style={{ marginTop: 12, textAlign: "right" }}>
+          <button
+            onClick={onCancel}
+            style={{
+              background: "transparent",
+              color: "rgba(239,236,228,0.5)",
+              border: "none",
+              fontSize: 11,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            Cancel demo
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   switch (state.step) {
     case "intro":
       return (
-        <>
-          <H2>Set up an autonomous billing agent on your inbox</H2>
-          <P>
-            Manthan reads customer emails, investigates across every
-            connected system, and resolves the case — refunds, replies,
-            CRM updates — all on its own when a policy says it can.
-          </P>
-          <P>
-            In the next few steps you'll set one policy ("auto-refund
-            small first-time requests"), then send a real email to
-            Manthan from your own inbox. You'll watch it work end to
-            end, including the reply it sends back to you.
-          </P>
-          <ActionRow>
-            <PrimaryButton onClick={props.onStartNow}>Start</PrimaryButton>
-          </ActionRow>
-        </>
-      );
-
-    case "policy-wipe":
-      return (
-        <>
-          <H2>One policy. Auto-refund small new-customer requests.</H2>
-          <P>
-            We've taken you to the Policies page. Policies are the
-            single switch that decides whether Manthan acts on its own
-            or asks you first.
-          </P>
-          <P>
-            Click the button below and we'll seed the policy
-            that pairs with the email you're about to send.{" "}
-            <span style={{ color: "rgba(239,236,228,0.6)" }}>
-              You can read, edit, or remove it after the demo.
-            </span>
-          </P>
-          {template && (
-            <PolicyCard
-              name={template.policy_name}
-              description={template.policy_description}
-            />
+        <CenterModal>
+          {tipFrame(
+            <>
+              <H2>Set up an autonomous billing agent — together.</H2>
+              <P>
+                Manthan can read customer emails, investigate across every
+                connected system, and resolve cases on its own when a policy
+                says it can.
+              </P>
+              <P>
+                You'll walk through the real product to set a policy, then
+                send a real email and watch Manthan handle it end to end.
+                I'll guide each step — you do the clicking.
+              </P>
+              <ActionRow>
+                <Primary onClick={props.onStartNow}>Begin</Primary>
+              </ActionRow>
+            </>,
           )}
-          <ActionRow>
-            <PrimaryButton
-              disabled={!!busy}
-              onClick={props.onSeedPolicy}
-            >
-              {busy ?? "Seed the policy"}
-            </PrimaryButton>
-          </ActionRow>
-        </>
+        </CenterModal>
       );
 
-    case "policy-seeded":
+    case "goto-policies":
       return (
-        <>
-          <H2>Policy is live.</H2>
-          <P>
-            Manthan will now auto-refund refund-request emails from
-            new customers, then email them back. No human review.
-          </P>
-          <P style={{ color: "rgba(239,236,228,0.7)" }}>
-            Next we'll test it — send a real email from your inbox.
-          </P>
-          <ActionRow>
-            <PrimaryButton
-              disabled={!!busy}
-              onClick={props.onConfirmPolicySeeded}
-            >
-              {busy ?? "Continue"}
-            </PrimaryButton>
-          </ActionRow>
-        </>
+        <Spotlight
+          target='a[href="/app/policy"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Open the Policies page</H3>
+              <P>
+                Policies are the rules Manthan follows when deciding whether
+                to act on its own. Click <strong>Policies</strong> in the
+                sidebar.
+              </P>
+            </>,
+          )}
+        />
+      );
+
+    case "click-new-rule":
+      return (
+        <Spotlight
+          target='[data-tour-target="new-rule-button"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Create a new rule</H3>
+              <P>
+                Click <strong>New rule</strong> to open the policy editor.
+              </P>
+            </>,
+          )}
+        />
+      );
+
+    case "name-rule":
+      return (
+        <Spotlight
+          target='[data-tour-target="rule-name-input"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Name the policy</H3>
+              <P>
+                Give it a clear identifier. Try:
+              </P>
+              <CodeRow value="autonomous-email-refunds" />
+              <P style={{ marginTop: 8, color: "rgba(239,236,228,0.55)", fontSize: 12.5 }}>
+                Names are kebab-case by convention. Anything works as long
+                as it's unique.
+              </P>
+            </>,
+          )}
+        />
+      );
+
+    case "set-conditions":
+      return (
+        <Spotlight
+          target='[data-tour-target="rule-conditions"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Set the trigger conditions</H3>
+              <P>
+                Tell Manthan <em>when</em> to fire this rule. For the demo,
+                we want refund requests that came in by email. Set:
+              </P>
+              <CondRow field="case.case_type" op="eq" value="refund_request" />
+              <P style={{ marginTop: 8 }}>
+                Then click <strong>+ Add condition</strong> and add:
+              </P>
+              <CondRow field="case.trigger_surface" op="eq" value="inbound_email" />
+              <ActionRow style={{ marginTop: 12 }}>
+                <Primary onClick={props.onManualNext}>Done — next</Primary>
+              </ActionRow>
+            </>,
+          )}
+        />
+      );
+
+    case "select-auto-mode":
+      return (
+        <Spotlight
+          target='[data-tour-target="rule-mode-group"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Choose auto-execute</H3>
+              <P>
+                Modes control what happens when the rule matches:
+              </P>
+              <ul
+                style={{
+                  margin: "6px 0 10px 0",
+                  paddingLeft: 16,
+                  fontSize: 13,
+                  color: "rgba(239,236,228,0.78)",
+                  lineHeight: 1.55,
+                }}
+              >
+                <li><strong>auto-execute</strong> — Manthan acts immediately, no review.</li>
+                <li><strong>recommend</strong> — drafts the brief, you approve.</li>
+                <li><strong>escalate</strong> — pushes to a human reviewer.</li>
+              </ul>
+              <P>
+                Click <strong>auto-execute</strong> so Manthan handles the
+                demo case without asking.
+              </P>
+            </>,
+          )}
+        />
+      );
+
+    case "save-rule":
+      return (
+        <Spotlight
+          target='[data-tour-target="rule-save"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Save the rule</H3>
+              <P>
+                Click <strong>Create rule</strong>. We'll detect it landed
+                and move you to the next step automatically.
+              </P>
+            </>,
+          )}
+        />
+      );
+
+    case "goto-inbox":
+      return (
+        <Spotlight
+          target='a[href="/app"]'
+          tooltip={tipFrame(
+            <>
+              <H3>Back to the Inbox</H3>
+              <P>
+                Your policy is live. Click <strong>Inbox</strong> in the
+                sidebar so you're set up to receive the case.
+              </P>
+            </>,
+          )}
+        />
       );
 
     case "send-email":
       return (
-        <SendEmailStep
-          template={template}
-          loggedInEmail={state.senderEmail ?? ""}
-          onSentEmail={props.onSentEmail}
-        />
+        <CenterModal>
+          {tipFrame(
+            <SendEmailBody
+              template={template}
+              loggedInEmail={state.senderEmail ?? ""}
+              onSentEmail={props.onSentEmail}
+            />,
+          )}
+        </CenterModal>
       );
 
     case "waiting-for-email":
       return (
-        <WaitingStep
-          startedAt={state.waitingStartedAt ?? Date.now()}
-          loggedInEmail={state.senderEmail ?? ""}
-          onAbort={props.onAbortWaiting}
-        />
+        <CenterModal>
+          {tipFrame(
+            <WaitingBody
+              startedAt={state.waitingStartedAt ?? Date.now()}
+              loggedInEmail={state.senderEmail ?? ""}
+              onAbort={props.onAbortWaiting}
+            />,
+          )}
+        </CenterModal>
       );
 
     case "case-opened":
+      // Don't dim - the workspace itself is the show. Just float a
+      // small tip at the top-right explaining what's about to happen.
       return (
-        <>
-          <H2>Manthan picked it up. Watch it work.</H2>
-          <P>
-            The agent is querying our connected sources — billing
-            records, customer history, support tickets, the relevant
-            policy doc — and recording each finding. The case is
-            set to auto-execute, so when the brief is ready Manthan
-            will fire the refund and reply automatically.
-          </P>
-          <P style={{ color: "rgba(239,236,228,0.6)", fontSize: "13px" }}>
-            Case {state.shortId ?? ""} · Behind this modal you can
-            see the investigation streaming live.
-          </P>
-          <ActionRow>
-            <P style={{ color: "rgba(239,236,228,0.55)", margin: 0, fontSize: "12px" }}>
-              Waiting for resolution… this usually takes 30–90 seconds.
-            </P>
-          </ActionRow>
-        </>
+        <FloatingTip>
+          {tipFrame(
+            <>
+              <H3>Watching Manthan work</H3>
+              <P>
+                Behind this card, Manthan is querying every connected
+                source — billing records, customer history, the policy
+                doc you just set. Because the policy says auto-execute,
+                actions will fire the moment the brief is ready. No
+                approve button.
+              </P>
+              <P style={{ color: "rgba(239,236,228,0.55)", fontSize: 12 }}>
+                Case {state.shortId ?? ""} · usually 30-90 seconds.
+              </P>
+            </>,
+          )}
+        </FloatingTip>
       );
 
     case "case-resolved":
       return (
-        <>
-          <H2>Resolved. End-to-end.</H2>
-          <P>
-            Manthan investigated the case, decided per the policy you
-            set, refunded the charge, and emailed your customer back.
-          </P>
-          <P style={{ color: "rgba(239,236,228,0.75)" }}>
-            <strong>Check your inbox</strong> — there's a reply waiting
-            for you ("Re: {(template?.subject ?? "your refund")}").
-            That's the actual email Manthan sent your customer,
-            delivered to you because you sent the demo from your own
-            address.
-          </P>
-          <ActionRow>
-            <PrimaryButton onClick={props.onFinish}>Finish</PrimaryButton>
-          </ActionRow>
-        </>
+        <CenterModal>
+          {tipFrame(
+            <>
+              <H2>Resolved end-to-end.</H2>
+              <P>
+                Manthan investigated, decided per the policy you set, fired
+                the refund, and emailed your customer back.
+              </P>
+              <P style={{ color: "rgba(239,236,228,0.78)" }}>
+                <strong>Check your inbox</strong> — there's a reply waiting
+                for you ("Re: {template?.subject ?? "your refund"}"). That's
+                the actual email Manthan sent your customer, delivered to
+                you because you sent the demo from your own address.
+              </P>
+              <ActionRow>
+                <Primary onClick={props.onFinish}>Finish</Primary>
+              </ActionRow>
+            </>,
+          )}
+        </CenterModal>
       );
 
     case "done":
@@ -549,7 +584,11 @@ function StepBody(props: {
   }
 }
 
-function SendEmailStep({
+// ──────────────────────────────────────────────────────────────────────
+// Body subcomponents
+// ──────────────────────────────────────────────────────────────────────
+
+function SendEmailBody({
   template,
   loggedInEmail,
   onSentEmail,
@@ -558,16 +597,14 @@ function SendEmailStep({
   loggedInEmail: string;
   onSentEmail: () => void;
 }) {
-  if (!template) {
-    return <P>Loading template…</P>;
-  }
+  if (!template) return <P>Loading template…</P>;
   const mailto =
     `mailto:${encodeURIComponent(template.to)}` +
     `?subject=${encodeURIComponent(template.subject)}` +
     `&body=${encodeURIComponent(template.body)}`;
   return (
     <>
-      <H2>Send this email — from your inbox, to Manthan.</H2>
+      <H2>Now send the test email</H2>
       <P>
         Send the message below from <strong>{loggedInEmail}</strong> so
         Manthan can verify the round-trip against your account.
@@ -575,27 +612,21 @@ function SendEmailStep({
       <CopyRow label="To" value={template.to} />
       <CopyRow label="Subject" value={template.subject} />
       <CopyRow label="Body" value={template.body} multiline />
-      <ActionRow style={{ marginTop: "18px", gap: "8px" }}>
-        <SecondaryButton onClick={() => window.open(mailto, "_blank")}>
+      <ActionRow style={{ gap: 8 }}>
+        <Secondary onClick={() => window.open(mailto, "_blank")}>
           Compose in mail client
-        </SecondaryButton>
-        <PrimaryButton onClick={onSentEmail}>I've sent it</PrimaryButton>
+        </Secondary>
+        <Primary onClick={onSentEmail}>I've sent it</Primary>
       </ActionRow>
-      <P
-        style={{
-          color: "rgba(239,236,228,0.55)",
-          fontSize: "11.5px",
-          marginTop: "12px",
-        }}
-      >
-        Last cancel point — once you confirm the send we'll watch the
-        case end-to-end.
+      <P style={{ color: "rgba(239,236,228,0.55)", fontSize: 11.5, marginTop: 10 }}>
+        Last cancel point — once you confirm we'll wait for the inbound
+        case and lock the page until the agent finishes.
       </P>
     </>
   );
 }
 
-function WaitingStep({
+function WaitingBody({
   startedAt,
   loggedInEmail,
   onAbort,
@@ -614,20 +645,18 @@ function WaitingStep({
   const mins = Math.floor(remaining / 60_000);
   const secs = Math.floor((remaining % 60_000) / 1_000);
   const pct = Math.min(100, (elapsed / POLL_TIMEOUT_MS) * 100);
-
   return (
     <>
       <H2>Listening for your email…</H2>
       <P>
-        We're polling for an inbound email from{" "}
-        <strong>{loggedInEmail}</strong>. As soon as it lands, we'll
-        jump you to the case Manthan opens.
+        Polling for an inbound email from <strong>{loggedInEmail}</strong>.
+        As soon as it lands, we'll jump you to the case.
       </P>
       <div
         style={{
           background: "rgba(255,255,255,0.06)",
-          borderRadius: "999px",
-          height: "6px",
+          borderRadius: 999,
+          height: 6,
           overflow: "hidden",
           margin: "10px 0 6px",
         }}
@@ -643,38 +672,83 @@ function WaitingStep({
           }}
         />
       </div>
-      <P
-        style={{
-          color: expired ? "#ffb3a3" : "rgba(239,236,228,0.6)",
-          fontSize: "12px",
-          margin: 0,
-        }}
-      >
+      <P style={{ color: expired ? "#ffb3a3" : "rgba(239,236,228,0.6)", fontSize: 12, margin: 0 }}>
         {expired
           ? "Didn't arrive within 5 minutes."
           : `Waiting · ${mins}:${String(secs).padStart(2, "0")} left`}
       </P>
       {expired && (
-        <>
-          <P style={{ marginTop: "12px", fontSize: "13.5px" }}>
-            Common causes: sent from a different address, hit spam, or
-            your mail client hadn't released the message yet. You can
-            try again from the previous step.
-          </P>
-          <ActionRow style={{ gap: "8px" }}>
-            <SecondaryButton onClick={onAbort}>
-              Back to the send step
-            </SecondaryButton>
-          </ActionRow>
-        </>
+        <ActionRow style={{ gap: 8 }}>
+          <Secondary onClick={onAbort}>Back to the send step</Secondary>
+        </ActionRow>
       )}
     </>
   );
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Visual primitives
+// Primitives
 // ──────────────────────────────────────────────────────────────────────
+
+function CenterModal({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        background: "rgba(8,10,8,0.74)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "grid",
+        placeItems: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          width: "min(540px, 100%)",
+          background: "#15171a",
+          border: "1px solid rgba(255,255,255,0.10)",
+          borderRadius: 16,
+          padding: "26px 26px 20px",
+          color: "#efece4",
+          fontFamily:
+            'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+          boxShadow: "0 30px 80px rgba(0,0,0,0.5)",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FloatingTip({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 20,
+        right: 20,
+        zIndex: 9000,
+        width: 340,
+        background: "#15171a",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 12,
+        padding: "16px",
+        color: "#efece4",
+        fontFamily:
+          'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        boxShadow: "0 20px 50px rgba(0,0,0,0.45)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 function H2({ children }: { children: React.ReactNode }) {
   return (
@@ -683,14 +757,30 @@ function H2({ children }: { children: React.ReactNode }) {
         fontFamily: '"Spectral", Georgia, serif',
         fontWeight: 500,
         fontStyle: "italic",
-        fontSize: "26px",
+        fontSize: 24,
         lineHeight: 1.18,
-        margin: "0 0 14px 0",
-        color: "#efece4",
+        margin: "0 0 12px 0",
       }}
     >
       {children}
     </h2>
+  );
+}
+
+function H3({ children }: { children: React.ReactNode }) {
+  return (
+    <h3
+      style={{
+        fontFamily: '"Spectral", Georgia, serif',
+        fontWeight: 500,
+        fontStyle: "italic",
+        fontSize: 18,
+        lineHeight: 1.25,
+        margin: "0 0 8px 0",
+      }}
+    >
+      {children}
+    </h3>
   );
 }
 
@@ -704,10 +794,10 @@ function P({
   return (
     <p
       style={{
-        margin: "0 0 12px 0",
-        fontSize: "14.5px",
+        margin: "0 0 10px 0",
+        fontSize: 13.5,
         lineHeight: 1.55,
-        color: "rgba(239,236,228,0.85)",
+        color: "rgba(239,236,228,0.84)",
         ...style,
       }}
     >
@@ -728,8 +818,8 @@ function ActionRow({
       style={{
         display: "flex",
         justifyContent: "flex-end",
-        gap: "10px",
-        marginTop: "20px",
+        gap: 10,
+        marginTop: 16,
         ...style,
       }}
     >
@@ -738,7 +828,7 @@ function ActionRow({
   );
 }
 
-function PrimaryButton({
+function Primary({
   children,
   onClick,
   disabled,
@@ -754,13 +844,12 @@ function PrimaryButton({
       style={{
         background: disabled ? "rgba(22,208,94,0.35)" : "#16d05e",
         color: "#0a0c0a",
-        border: "0",
-        borderRadius: "10px",
-        padding: "10px 16px",
-        fontSize: "13.5px",
+        border: 0,
+        borderRadius: 10,
+        padding: "9px 14px",
+        fontSize: 13,
         fontWeight: 600,
         cursor: disabled ? "not-allowed" : "pointer",
-        letterSpacing: "0.01em",
       }}
     >
       {children}
@@ -768,7 +857,7 @@ function PrimaryButton({
   );
 }
 
-function SecondaryButton({
+function Secondary({
   children,
   onClick,
 }: {
@@ -782,9 +871,9 @@ function SecondaryButton({
         background: "transparent",
         color: "#efece4",
         border: "1px solid rgba(255,255,255,0.18)",
-        borderRadius: "10px",
-        padding: "10px 14px",
-        fontSize: "13.5px",
+        borderRadius: 10,
+        padding: "9px 14px",
+        fontSize: 13,
         cursor: "pointer",
       }}
     >
@@ -793,35 +882,89 @@ function SecondaryButton({
   );
 }
 
-function PolicyCard({
-  name,
-  description,
-}: {
-  name: string;
-  description: string;
-}) {
+function ErrorBox({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "10px",
-        padding: "12px 14px",
-        margin: "8px 0 14px",
+        background: "rgba(220,80,80,0.10)",
+        border: "1px solid rgba(220,80,80,0.32)",
+        color: "#ffb3b3",
+        padding: "8px 10px",
+        borderRadius: 8,
+        fontSize: 12.5,
+        marginTop: 10,
       }}
     >
-      <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>
-        {name}
-      </div>
-      <div
+      {children}
+    </div>
+  );
+}
+
+function CodeRow({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        } catch {
+          /* ignore */
+        }
+      }}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        background: "rgba(255,255,255,0.05)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 8,
+        padding: "8px 10px",
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+        fontSize: 12.5,
+        color: "rgba(239,236,228,0.92)",
+        cursor: "pointer",
+        transition: "background 150ms",
+      }}
+      title="Copy"
+    >
+      {value}
+      <span
         style={{
-          fontSize: "12.5px",
-          lineHeight: 1.5,
-          color: "rgba(239,236,228,0.7)",
+          float: "right",
+          fontSize: 10,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: copied ? "#16d05e" : "rgba(239,236,228,0.4)",
         }}
       >
-        {description}
-      </div>
+        {copied ? "Copied" : "Copy"}
+      </span>
+    </button>
+  );
+}
+
+function CondRow({ field, op, value }: { field: string; op: string; value: string }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
+        gap: 6,
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 8,
+        padding: "6px 8px",
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+        fontSize: 12,
+        color: "rgba(239,236,228,0.9)",
+        marginTop: 6,
+      }}
+    >
+      <span style={{ color: "rgba(120,200,140,0.95)" }}>{field}</span>
+      <span style={{ color: "rgba(239,236,228,0.5)" }}>{op}</span>
+      <span style={{ color: "rgba(255,210,140,0.95)" }}>{value}</span>
     </div>
   );
 }
@@ -836,37 +979,28 @@ function CopyRow({
   multiline?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* ignore */
-    }
-  }, [value]);
   return (
     <div
       style={{
         background: "rgba(255,255,255,0.04)",
         border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "10px",
-        padding: "10px 12px",
-        marginBottom: "8px",
+        borderRadius: 8,
+        padding: "8px 10px",
+        marginBottom: 6,
       }}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: multiline ? "6px" : "0",
-          gap: "10px",
+          alignItems: "center",
+          marginBottom: multiline ? 5 : 0,
+          gap: 10,
         }}
       >
         <div
           style={{
-            fontSize: "10.5px",
+            fontSize: 10.5,
             letterSpacing: "0.14em",
             color: "rgba(239,236,228,0.5)",
             textTransform: "uppercase",
@@ -875,14 +1009,24 @@ function CopyRow({
           {label}
         </div>
         <button
-          onClick={handleCopy}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            } catch {
+              /* noop */
+            }
+          }}
           style={{
             background: copied ? "rgba(22,208,94,0.18)" : "transparent",
             color: copied ? "#16d05e" : "rgba(239,236,228,0.75)",
-            border: `1px solid ${copied ? "rgba(22,208,94,0.36)" : "rgba(255,255,255,0.14)"}`,
-            borderRadius: "6px",
+            border: `1px solid ${
+              copied ? "rgba(22,208,94,0.36)" : "rgba(255,255,255,0.14)"
+            }`,
+            borderRadius: 6,
             padding: "3px 8px",
-            fontSize: "11px",
+            fontSize: 10.5,
             cursor: "pointer",
             transition: "all 120ms",
           }}
@@ -892,11 +1036,10 @@ function CopyRow({
       </div>
       <div
         style={{
-          fontFamily:
-            multiline
-              ? 'ui-sans-serif, system-ui, -apple-system, sans-serif'
-              : 'ui-monospace, "SF Mono", Menlo, monospace',
-          fontSize: multiline ? "13px" : "12.5px",
+          fontFamily: multiline
+            ? 'ui-sans-serif, system-ui, -apple-system, sans-serif'
+            : 'ui-monospace, "SF Mono", Menlo, monospace',
+          fontSize: multiline ? 12.5 : 12,
           color: "rgba(239,236,228,0.92)",
           whiteSpace: multiline ? "pre-wrap" : "nowrap",
           overflow: multiline ? "visible" : "hidden",

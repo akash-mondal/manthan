@@ -208,6 +208,7 @@ export function CreatePolicyRuleModal({
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. small-refund-auto"
                     required
+                    data-tour-target="rule-name-input"
                     className="w-full h-9 px-2.5 rounded-[3px] border bg-transparent text-[13px] focus:outline-none"
                     style={{
                       borderColor: "var(--color-rule)",
@@ -230,36 +231,40 @@ export function CreatePolicyRuleModal({
                   />
                 </FieldGroup>
 
-                <FieldGroup label="When ALL of these are true">
-                  <div className="space-y-2">
-                    {conds.map((row, i) => (
-                      <ConditionRowEditor
-                        key={row.id}
-                        row={row}
-                        canDelete={conds.length > 1}
-                        isFirst={i === 0}
-                        onChange={(patch) => updateCond(row.id, patch)}
-                        onDelete={() => removeCond(row.id)}
-                      />
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addCond}
-                    className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] uppercase tracking-[0.13em] hover:opacity-90"
-                    style={{ color: "var(--color-accent)" }}
-                  >
-                    + Add condition
-                  </button>
-                </FieldGroup>
+                <div data-tour-target="rule-conditions">
+                  <FieldGroup label="When ALL of these are true">
+                    <div className="space-y-2">
+                      {conds.map((row, i) => (
+                        <ConditionRowEditor
+                          key={row.id}
+                          row={row}
+                          canDelete={conds.length > 1}
+                          isFirst={i === 0}
+                          onChange={(patch) => updateCond(row.id, patch)}
+                          onDelete={() => removeCond(row.id)}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addCond}
+                      className="mt-2 inline-flex items-center gap-1.5 text-[11.5px] uppercase tracking-[0.13em] hover:opacity-90"
+                      style={{ color: "var(--color-accent)" }}
+                    >
+                      + Add condition
+                    </button>
+                  </FieldGroup>
+                </div>
 
                 <FieldGroup label="Then">
-                  <div className="flex items-baseline gap-5">
+                  <div className="flex items-baseline gap-5" data-tour-target="rule-mode-group">
                     {MODES.map((m) => (
                       <button
                         key={m}
                         type="button"
                         onClick={() => setMode(m)}
+                        data-tour-target={m === "auto" ? "rule-mode-auto" : undefined}
+                        data-tour-selected={mode === m ? "true" : "false"}
                         className="text-[11.5px] uppercase tracking-[0.13em] transition-opacity hover:opacity-90"
                         style={{
                           color:
@@ -322,6 +327,7 @@ export function CreatePolicyRuleModal({
                   <button
                     onClick={submit}
                     disabled={submitting || !name.trim()}
+                    data-tour-target="rule-save"
                     className="h-8 px-3.5 text-[12.5px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5 rounded-[3px]"
                     style={{
                       background: "var(--color-ink-strong)",

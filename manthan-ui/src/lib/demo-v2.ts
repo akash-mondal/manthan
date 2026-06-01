@@ -14,20 +14,34 @@ import { call } from "@/lib/api";
 // Step model
 // ──────────────────────────────────────────────────────────────────────
 
+// The wizard walks the user through real product UI - each step
+// spotlights an actual element and waits for the user to interact.
+// We DON'T do things for them - they click "New rule", they fill in
+// the name, they pick the mode, they hit save. The wizard just coaches.
 export type StepId =
-  | "intro"
-  | "policy-wipe"          // auto-nav to /app/policy, explain, button to seed
-  | "policy-seeded"        // confirm what was set, transition
-  | "send-email"           // copy buttons + mailto, last cancel point
-  | "waiting-for-email"    // 5-min poll, cancel disabled
-  | "case-opened"          // nav to case workspace, watch agent
-  | "case-resolved"        // outro, "check your inbox"
+  | "intro"                  // center modal, "Welcome, here's what we'll do"
+  | "goto-policies"          // spotlight the Policies sidebar link
+  | "click-new-rule"         // spotlight the "New rule" button
+  | "name-rule"              // spotlight the Name input
+  | "set-conditions"         // spotlight the When-conditions block
+  | "select-auto-mode"       // spotlight the auto-execute mode button
+  | "save-rule"              // spotlight the Create rule button
+  | "goto-inbox"             // spotlight the Inbox sidebar link
+  | "send-email"             // center modal, 3 copy buttons + mailto
+  | "waiting-for-email"      // center modal, 5-min countdown poll
+  | "case-opened"            // dim, "watch the agent" floating tip
+  | "case-resolved"          // center modal, outro
   | "done";
 
 export const STEP_ORDER: StepId[] = [
   "intro",
-  "policy-wipe",
-  "policy-seeded",
+  "goto-policies",
+  "click-new-rule",
+  "name-rule",
+  "set-conditions",
+  "select-auto-mode",
+  "save-rule",
+  "goto-inbox",
   "send-email",
   "waiting-for-email",
   "case-opened",
@@ -40,8 +54,13 @@ export const STEP_ORDER: StepId[] = [
 // regardless; cancelling the wizard doesn't undo that.
 export const CANCELLABLE_STEPS: ReadonlySet<StepId> = new Set([
   "intro",
-  "policy-wipe",
-  "policy-seeded",
+  "goto-policies",
+  "click-new-rule",
+  "name-rule",
+  "set-conditions",
+  "select-auto-mode",
+  "save-rule",
+  "goto-inbox",
   "send-email",
 ]);
 
