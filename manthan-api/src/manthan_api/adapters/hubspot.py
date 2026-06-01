@@ -32,23 +32,6 @@ def create_note(payload: dict[str, Any], idempotency_key: str) -> ExecutionResul
     company_id = payload.get("company_id")
     body = payload.get("body", "")
     if not company_id:
-        # Demo-mode shortcut: surface as a queued-but-not-attached note
-        # so the case finalizes cleanly. Production deployments resolve
-        # the company by HubSpot search before reaching this adapter.
-        if os.environ.get("MANTHAN_DEMO_MODE"):
-            ref = f"DEMO-HS-{idempotency_key[:8].upper()}"
-            return ExecutionResult(
-                external_ref=ref,
-                summary=(
-                    "HubSpot note queued (demo): no company_id resolved - "
-                    "would attach to the customer's company in production"
-                ),
-                raw={
-                    "id": ref,
-                    "demo": True,
-                    "reason": "missing company_id",
-                },
-            )
         raise AdapterError("hubspot.create_note payload requires company_id")
 
     body_with_key = f"{body}\n\n- Manthan {idempotency_key}"

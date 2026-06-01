@@ -434,8 +434,8 @@ function SourceCoralModal({
                       color: "var(--color-ink-faint)",
                     }}
                   >
-                    No env vars wired for this source - Coral falls back
-                    to the in-process mock catalog.
+                    No credentials wired for this source - configure it
+                    in `coral source add` to enable live queries.
                   </p>
                 ) : (
                   <ul className="flex flex-col gap-3">

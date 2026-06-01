@@ -9,9 +9,9 @@ The loop yields Event objects as they happen. Caller iterates with
 `async for event in run(case_id)`. Termination is a typed Terminal
 value returned from the generator (via StopAsyncIteration.value).
 
-Step 1 scope: investigate-then-conclude. No Postgres yet (in-memory
-EventStore). No real Coral yet (mock tool handlers). The architecture
-is complete; the integrations swap in steps 2 and 3.
+Coral tool calls dispatch through the MCP session bound on
+`coral_session.set_active_coral_session()`; persistence is via
+asyncpg EventStore in manthan-api/workers/investigate.py.
 """
 
 from __future__ import annotations

@@ -29,11 +29,6 @@ import SourceHealth from "./pages/SourceHealth";
 import Packs from "./pages/Packs";
 import Help from "./pages/Help";
 import Inbox from "./pages/Inbox";
-import WorkspaceMemo from "./pages/drafts/WorkspaceMemo";
-import DraftInbox from "./pages/drafts/DraftInbox";
-import DraftAudit from "./pages/drafts/DraftAudit";
-import DraftPolicies from "./pages/drafts/DraftPolicies";
-import DraftSources from "./pages/drafts/DraftSources";
 import InvestigationMemo from "./pages/drafts/InvestigationMemo";
 
 export function AppRouter() {
@@ -112,14 +107,9 @@ export function AppRouter() {
           <Route path="settings" element={<Settings />} />
           <Route path="help" element={<Help />} />
 
-          {/* Throwaway dashboard-redesign prototypes - editorial-memo
-              vocabulary, pulled from the landing's BriefCanvas + the
-              AuditVisual / CrossSourceVisual patterns. */}
-          <Route path="workspace-memo" element={<WorkspaceMemo />} />
-          <Route path="inbox-memo" element={<DraftInbox />} />
-          <Route path="audit-memo" element={<DraftAudit />} />
-          <Route path="policies-memo" element={<DraftPolicies />} />
-          <Route path="sources-memo" element={<DraftSources />} />
+          {/* Investigation-phase canvas (live agent narrative). Only
+              reachable via deep-link; production routes through
+              /app/case/:id which dispatches based on status. */}
           <Route path="investigation-memo/:id" element={<InvestigationMemo />} />
         </Route>
 

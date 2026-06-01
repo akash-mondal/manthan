@@ -9,8 +9,8 @@ type and a `read_only` flag that determines dispatch behavior:
 Every Coral tool (coral_sql, coral_list_catalog, coral_describe_table)
 dispatches to the real Coral binary via the MCP session bound on
 `coral_session.set_active_coral_session()`. The session is mandatory:
-without it the executor raises so misconfiguration fails loudly instead
-of silently returning fake rows.
+without it the executor raises, so config drift fails loudly instead
+of silently returning fabricated rows.
 """
 
 from __future__ import annotations
@@ -304,8 +304,10 @@ def _sources_in_query(q: str) -> set[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Real Coral handlers (async - called when get_active_coral_session()
-# returns a live ClientSession; otherwise mocks take over).
+# Coral handlers (async) — dispatch SQL / catalog / describe-table calls
+# through the MCP session bound on coral_session.set_active_coral_session().
+# The handlers raise RuntimeError when no session is bound so config drift
+# fails loudly instead of silently returning anything synthesized.
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -532,8 +534,8 @@ class ToolExecutor:
     """
 
     def __init__(self) -> None:
-        # Shared per-case Evidence accumulator. The mocks append to it;
-        # real Coral calls will too. Findings reference these by index.
+        # Per-case Evidence accumulator. Every Coral tool call appends
+        # its returned rows here; findings then reference them by index.
         self.evidence: list[Evidence] = []
 
     async def dispatch(self, calls: list[ToolCall]) -> list[ToolResult]:

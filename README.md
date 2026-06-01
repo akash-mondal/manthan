@@ -131,14 +131,14 @@ The agent code lives in [`agent/`](./agent) - a small Python loop (~hundreds of 
 | `notion`  | Append resolution block to the case page |
 | `linear`  | Open an issue when the agent escalates (low-confidence or out-of-policy cases) |
 
-Each adapter ships with a graceful demo-mode fallback so demos always show green even when a key is missing or a Stripe charge is already disputed.
+When an upstream rejects an action (Stripe `charge_disputed`, Slack `channel_not_found`, etc.) the action is recorded as `failed` in the audit trail with the verbatim error; we never synthesize a success ref. The parallel actions still fire — e.g. the partial credit lands via `stripe_dispute_response` even when `stripe_refund` is rejected on a disputed charge.
 
 ## Features
 
 - 🧠 **One-query investigations.** Coral exposes 11 SaaS schemas as Postgres-compatible SQL. The agent writes wide joins across them in a single round-trip, never per-source lookups.
 - 📑 **Cited brief.** Every claim in the postmortem carries a citation chip linking back to the underlying record (Stripe dispute, Notion page, Datadog incident). No fabrication - if it's in the brief, it's in a source.
 - 🔴 **Live investigation cinematic.** Watch the agent query each source in real time, with brand glyphs inline in the narrative ("Manthan is asking 🟢 Intercom") and a running list of facts. Toggle the Coral panel to see the raw SQL feed.
-- ✋ **Human-in-the-loop approval.** Operator reviews the brief, approves with one click, watches each action fire in a full-screen cinematic with per-action status, external-ref links, and graceful demo-mode fallbacks.
+- ✋ **Human-in-the-loop approval.** Operator reviews the brief, approves with one click, watches each action fire in a full-screen cinematic with per-action status and external-ref deep-links back to the source record (real Stripe refund / Resend email / HubSpot note / Slack ts).
 - ✉️ **Branded customer emails.** Templated HTML emails (table-based for Outlook/Gmail compat) with summary cards, branded header, and policy-grounded reasoning - never the raw decision rationale.
 - 🔒 **Per-user workspace isolation.** Every Clerk-authenticated user gets their own isolated org. Two operators can run investigations in parallel against the same demo data without seeing each other's cases.
 - 📖 **Editorial UI.** The whole product reads like a magazine spread - Spectral serif, hairline rules, brand-colored source pills, Geist Mono for the data - not a SaaS dashboard.

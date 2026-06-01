@@ -5,9 +5,10 @@
  *   - Workspace · team       → /api/me
  *
  * Everything else (billing, compliance certifications, policy
- * thresholds, notification channels) is honestly labelled DEMO MODE -
- * the page used to ship hard-coded plausible-but-fake values which the
- * operator can't change, and that's worse than not showing them at all.
+ * thresholds, notification channels) is honestly labelled "Demo mode" -
+ * it's part of the production surface but isn't exposed in this build,
+ * so we list it explicitly rather than render opaque settings rows
+ * the operator can't actually change.
  *
  * Same typography ramp as the other editorial-memo pages: Spectral
  * italic title, Geist Mono uppercase labels, hairlines for separators.
@@ -367,10 +368,10 @@ function DemoCard() {
           color: "var(--color-ink)",
         }}
       >
-        Billing, compliance, notifications, and a few minor knobs are
-        wired in production but run in demo mode here. We’d rather
-        show nothing than show plausible-but-fake values you can’t
-        change.
+        Billing, compliance, and notification channels are part of the
+        production surface and aren’t exposed in this build. Listed here
+        so contributors know what’s missing rather than hidden behind
+        opaque settings rows.
       </p>
       <ul
         className="mt-5 flex flex-col"

@@ -21,8 +21,9 @@ def post(payload: dict[str, Any], idempotency_key: str) -> ExecutionResult:
 
     Channel resolution chain when channel_not_found:
       1. The channel the brief requested (drafter's pick)
-      2. MANTHAN_SLACK_CHANNEL env (operator's default)
-      3. Demo-mode synthetic success so the case still finalizes
+      2. MANTHAN_SLACK_CHANNEL env (operator's default real channel)
+      3. Surface the real Slack error - the action is recorded as
+         failed with the error message; we never invent a ts.
     """
     token = os.environ.get("SLACK_TOKEN") or os.environ.get("SLACK_BOT_TOKEN")
     if not token:
@@ -36,7 +37,6 @@ def post(payload: dict[str, Any], idempotency_key: str) -> ExecutionResult:
         raise AdapterError("slack.post payload requires channel")
 
     fallback = os.environ.get("MANTHAN_SLACK_CHANNEL")
-    demo_mode = os.environ.get("MANTHAN_DEMO_MODE")
 
     def _try(ch: str):
         return client.chat_postMessage(
@@ -55,7 +55,7 @@ def post(payload: dict[str, Any], idempotency_key: str) -> ExecutionResult:
     except SlackApiError as e:
         err = e.response["error"] if e.response else str(e)
         # Drafter picked a channel that doesn't exist / bot isn't in.
-        # Try the env-configured fallback before giving up.
+        # Try the env-configured fallback (a real channel) before giving up.
         if err == "channel_not_found" and fallback and fallback != channel:
             attempted.append(fallback)
             try:
@@ -75,24 +75,9 @@ def post(payload: dict[str, Any], idempotency_key: str) -> ExecutionResult:
                 )
             except SlackApiError as e2:
                 err = e2.response["error"] if e2.response else str(e2)
-        # Out of fallbacks. In demo mode, succeed gracefully so the
-        # case finalizes; in production let it fail loudly.
-        if demo_mode:
-            ref = f"DEMO-SLACK-{idempotency_key[:8].upper()}"
-            return ExecutionResult(
-                external_ref=ref,
-                summary=(
-                    f"Slack post queued (demo): tried {', '.join(attempted)} - "
-                    f"last error: {err}"
-                ),
-                raw={
-                    "ts": ref,
-                    "demo": True,
-                    "reason": err,
-                    "attempted": attempted,
-                },
-            )
-        raise AdapterError(f"slack post failed: {err}")
+        raise AdapterError(
+            f"slack post failed: {err} (tried {', '.join(attempted)})"
+        )
 
     return ExecutionResult(
         external_ref=str(r["ts"]),

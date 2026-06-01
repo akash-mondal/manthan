@@ -166,7 +166,7 @@ def _employees_for(slug: str) -> int:
 
 
 def _fake_phone(slug: str) -> str:
-    """Build a fake +1 phone number deterministic per slug."""
+    """Generate a deterministic synthetic +1 phone number for the seeded customer."""
     h = _slug_hash(slug, "phone")
     area = 200 + (h % 700)            # 200-899
     mid = 200 + ((h >> 8) % 800)      # 200-999

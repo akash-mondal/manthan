@@ -3,17 +3,13 @@
  *
  * Renders one case in the landing's BriefCanvas vocabulary: HeaderStrip
  * at the top, two-column editorial spread inside (postmortem left,
- * suggested actions right), and an optional Coral toggle that swaps the
- * brief for the raw SQL trace.
+ * suggested actions right), and a Coral toggle that swaps the brief
+ * for the raw SQL trace wired to the case's SSE stream.
  *
- * Two modes:
- *   - PROPS-LESS:  /app/workspace-memo standalone - renders the baked
- *                  W7R Aperture mock data with no Coral toggle (no
- *                  case_id known, no events to subscribe to).
- *   - PROPS-FED:   the production /app/case/:id route passes real
- *                  caseData / findings / actions + caseId, and the
- *                  Coral toggle appears in the header. Click it →
- *                  raw SQL feed wired to the same case's SSE stream.
+ * Mounted by Workspace.tsx at /app/case/:id once the case has reached
+ * an awaiting-approval / resolved / escalated state - every prop is
+ * required and comes from the API; the component never falls back to
+ * fabricated data.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -65,142 +61,32 @@ export interface MemoCaseData {
 }
 
 export interface WorkspaceMemoProps {
-  /** Full case data. If absent, render the W7R Aperture mock. */
-  caseData?: MemoCaseData;
-  findings?: MemoFinding[];
-  actions?: MemoAction[];
-  /** Live action rows with id + status, used to drive the firing
-   *  cinematic. Falls back to a fabricated list from `actions` when
-   *  not provided (mock/preview routes). */
-  workspaceActions?: WorkspaceAction[];
-  /** Optional case_id - when present, the Coral toggle shows up in the
-   *  header and reads from this case's SSE event stream. */
-  caseId?: string;
+  /** Full case data shaped from the API row. */
+  caseData: MemoCaseData;
+  findings: MemoFinding[];
+  actions: MemoAction[];
+  /** Live action rows with id + status; drives the firing cinematic. */
+  workspaceActions: WorkspaceAction[];
+  /** Case_id - identifies the SSE stream the Coral toggle subscribes to. */
+  caseId: string;
   /** Called after the cinematic finishes so the parent can refetch the
    *  case detail (status → resolved, actions → succeeded). */
   onActionsExecuted?: () => void;
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Default mock data - the W7R Aperture story. Used when the component
-// renders standalone at /app/workspace-memo (no props).
-// ──────────────────────────────────────────────────────────────────────
-
-const MOCK_CASE: MemoCaseData = {
-  shortId: "W7R-APERTURE",
-  customer: "Aperture Analytics",
-  caseLine: "vs. an $8,400 chargeback over Custom Reports degradation",
-  disputedAmount: "$8,400",
-  recommendedAmount: "$560",
-  recommendedSubtitle:
-    "partial credit · 2 of 30 days at the Premium tier",
-  status: "awaiting_approval",
-  policyMatched: "documented-incident-prorata-credit",
-  policyMode: "recommend",
-  tldr:
-    "Aperture disputes the full $8,400 April Premium charge citing Custom " +
-    "Reports degradation. Datadog confirms a 48-hour SLA breach during the " +
-    "cycle (2026-04-13 → 04-15) - exactly the window the customer " +
-    "references in Intercom. The Notion 'Documented Incident Pro-Rata " +
-    "Credit' policy mandates 2/30 × $8,400 = $560. Customer self-downgraded " +
-    "post-incident; no full-refund basis.",
-};
-
-const MOCK_FINDINGS: MemoFinding[] = [
-  {
-    src: "stripe",
-    text:
-      "$8,400 captured 2026-04-12 on charge ch_3Tch1L; dispute du_1Tch1O " +
-      "filed 2026-05-08, reason product_not_as_described.",
-    citeRef: "ch_3Tch1L",
-  },
-  {
-    src: "datadog",
-    text:
-      "Monitor custom-reports-svc error_rate elevated (id 20175237) " +
-      "documents a 48-hour SLA breach 2026-04-13 → 04-15 for Premium tier.",
-    citeRef: "monitor/20175237",
-  },
-  {
-    src: "intercom",
-    text:
-      "Customer message 2026-04-14 cites Custom Reports timeouts " +
-      "“today and yesterday” - aligns exactly with the Datadog window.",
-    citeRef: "conv/3708443460",
-  },
-  {
-    src: "notion",
-    text:
-      "Policy 'Documented Incident Pro-Rata Credit' SOP: credit = " +
-      "(degraded_days / cycle_days) × tier_amount. Worked example: " +
-      "$8,400 × 2/30 = $560.",
-    citeRef: "page/37043656",
-  },
-  {
-    src: "hubspot",
-    text:
-      "Customer self-downgraded Premium → Standard on 2026-04-16, " +
-      "immediately after the incident resolved.",
-    citeRef: "company/324974146247",
-  },
-];
-
-const MOCK_ACTIONS: MemoAction[] = [
-  {
-    src: "stripe",
-    title: "Issue partial Stripe refund of $560",
-    target: "POST /v1/refunds · charge=ch_3Tch1L · amount=56000",
-  },
-  {
-    src: "stripe",
-    title: "File concede response on the open dispute",
-    target: "POST /v1/disputes/du_1Tch1O · submit=true · concede",
-  },
-  {
-    src: "resend",
-    title: "Email Aperture's billing contact",
-    target: "POST /resend/emails · to=billing@aperture-analytics.co",
-  },
-  {
-    src: "hubspot",
-    title: "Append resolution note to HubSpot",
-    target: "POST /crm/v3/notes · companyId=324974146247",
-  },
-  {
-    src: "slack",
-    title: "Post case brief to #ar-ops",
-    target: "chat.postMessage · channel=#ar-ops",
-  },
-];
-
-// ──────────────────────────────────────────────────────────────────────
 // Component
 // ──────────────────────────────────────────────────────────────────────
 
-export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
-  const caseData = props.caseData ?? MOCK_CASE;
-  const findings = props.findings ?? MOCK_FINDINGS;
-  const actions = props.actions ?? MOCK_ACTIONS;
-  const caseId = props.caseId;
-  const onActionsExecuted = props.onActionsExecuted;
-
-  // WorkspaceAction[] for the cinematic. When the parent didn't pass
-  // it (mock route), fabricate a barebones list from the MemoAction
-  // shape so the cinematic still has something to walk through.
-  const workspaceActions = useMemo<WorkspaceAction[]>(() => {
-    if (props.workspaceActions && props.workspaceActions.length > 0) {
-      return props.workspaceActions;
-    }
-    return actions.map((a, i) => ({
-      id: `mock-${i}`,
-      kind: a.src,
-      source: a.src,
-      title: a.title,
-      target: a.target,
-      body: a.target,
-      status: "drafted" as const,
-    }));
-  }, [props.workspaceActions, actions]);
+export default function WorkspaceMemo(props: WorkspaceMemoProps) {
+  const {
+    caseData,
+    findings,
+    actions,
+    workspaceActions,
+    caseId,
+    onActionsExecuted,
+  } = props;
 
   // Approve flow. `awaiting` → operator hasn't clicked yet.
   // `firing` → cinematic is playing, actor is executing actions.
@@ -222,19 +108,13 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
   );
   const [approveError, setApproveError] = useState<string | null>(null);
 
-  // Brief ↔ Coral toggle. When `caseId` is absent (standalone route)
-  // the toggle is hidden and we always render the brief.
+  // Brief ↔ Coral toggle.
   const [mode, setMode] = useState<"prose" | "coral">("prose");
 
-  // Chat drawer (slides in from the right). Available only when caseId is
-  // provided - there's no thread to chat about in standalone mock mode.
+  // Chat drawer (slides in from the right).
   const [chatOpen, setChatOpen] = useState(false);
 
-  // Subscribe to SSE only when caseId is provided AND coral mode is
-  // opened at least once - keeps the event source dormant for the
-  // common "operator just glances at the brief" case.
-  const liveEnabled = !!caseId;
-  const { events, isComplete } = useCaseEvents(liveEnabled ? caseId : undefined);
+  const { events, isComplete } = useCaseEvents(caseId);
   const coralSteps = useMemo(() => collectCoralSteps(events), [events]);
   const currentSource = useMemo(() => latestSource(events), [events]);
 
@@ -253,13 +133,6 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
     if (state !== "awaiting") return;
     setState("firing");
     setApproveError(null);
-    // No caseId means we're in the standalone mock route; let the
-    // cinematic play against the synthetic actions and call it done.
-    if (!caseId) {
-      // In mock mode there's no API to wait on, so the cinematic's
-      // own onAllComplete is the source of truth.
-      return;
-    }
     try {
       await approveCase(caseId);
     } catch (e) {
@@ -279,10 +152,7 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
     // event arrives via SSE. Always trigger a refetch so the parent
     // can refresh action statuses + case row.
     onActionsExecuted?.();
-    if (caseId && isCaseTerminal) {
-      setState("fired");
-    } else if (!caseId) {
-      // Mock route - no backend to wait on.
+    if (isCaseTerminal) {
       setState("fired");
     }
     // else: stay in "firing"; the SSE useEffect above will flip us when
@@ -322,12 +192,12 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
           caseData={caseData}
           phaseLabel={phaseLabel}
           phaseAccent={phaseAccent}
-          showCoralToggle={liveEnabled}
+          showCoralToggle
           mode={mode}
           onToggleMode={() =>
             setMode((m) => (m === "prose" ? "coral" : "prose"))
           }
-          showChatToggle={liveEnabled}
+          showChatToggle
           chatOpen={chatOpen}
           onToggleChat={() => setChatOpen((v) => !v)}
         />
@@ -391,31 +261,29 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps = {}) {
               open; we skip framer-motion here (got stuck mid-animation
               in this preview setup) and use a plain CSS transition for
               the slide-in. */}
-          {liveEnabled && (
-            <aside
-              style={{
-                width: 420,
-                borderLeft: "1px solid var(--color-rule)",
-                background: "#1a1816",
-                boxShadow: "-22px 0 38px rgba(0,0,0,0.50)",
-                transform: chatOpen ? "translateX(0)" : "translateX(440px)",
-                opacity: chatOpen ? 1 : 0,
-                pointerEvents: chatOpen ? "auto" : "none",
-                transition:
-                  "transform 280ms cubic-bezier(0.22,0.61,0.36,1), opacity 200ms ease",
-              }}
-              className="absolute top-0 right-0 bottom-0 flex flex-col z-20"
-              aria-hidden={!chatOpen}
-            >
-              {chatOpen && (
-                <ChatDrawer
-                  caseId={caseId!}
-                  events={events}
-                  onClose={() => setChatOpen(false)}
-                />
-              )}
-            </aside>
-          )}
+          <aside
+            style={{
+              width: 420,
+              borderLeft: "1px solid var(--color-rule)",
+              background: "#1a1816",
+              boxShadow: "-22px 0 38px rgba(0,0,0,0.50)",
+              transform: chatOpen ? "translateX(0)" : "translateX(440px)",
+              opacity: chatOpen ? 1 : 0,
+              pointerEvents: chatOpen ? "auto" : "none",
+              transition:
+                "transform 280ms cubic-bezier(0.22,0.61,0.36,1), opacity 200ms ease",
+            }}
+            className="absolute top-0 right-0 bottom-0 flex flex-col z-20"
+            aria-hidden={!chatOpen}
+          >
+            {chatOpen && (
+              <ChatDrawer
+                caseId={caseId}
+                events={events}
+                onClose={() => setChatOpen(false)}
+              />
+            )}
+          </aside>
         </div>
       </div>
     </div>
@@ -1309,10 +1177,10 @@ function SourceWord({ src, label }: { src: string; label: string }) {
  *
  * The backend already pre-builds `url` on ApiCitation when it knows how
  * (the canonical path); this helper is the client-side fallback used
- * when the chip arrives with only the structural triple (e.g. mock
- * data, older briefs, or sources the backend hasn't been taught to
- * deep-link yet). Returns null when we can't safely build a URL so the
- * chip stays a plain span instead of becoming a dead link.
+ * when the chip arrives with only the structural triple (older briefs
+ * or sources the backend hasn't been taught to deep-link yet). Returns
+ * null when we can't safely build a URL so the chip stays a plain span
+ * instead of becoming a dead link.
  *
  * Templates mirror the table in the wiring doc. Stripe uses the test-
  * mode dashboard because the agent currently runs against test keys;

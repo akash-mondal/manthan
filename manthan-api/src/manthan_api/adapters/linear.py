@@ -20,44 +20,14 @@ def create_issue(payload: dict[str, Any], idempotency_key: str) -> ExecutionResu
       priority: 0-4 (optional)
     """
     token = os.environ.get("LINEAR_API_KEY")
-    demo_mode = os.environ.get("MANTHAN_DEMO_MODE")
     title = payload.get("title") or payload.get("description") or "Manthan follow-up"
 
-    # Demo-mode shortcut: when no Linear key is configured AND we're
-    # running a demo, return a synthetic-success ExecutionResult so the
-    # case can finalize cleanly. Production deployments configure
-    # LINEAR_API_KEY and this branch never fires.
     if not token:
-        if demo_mode:
-            ref = f"DEMO-LIN-{idempotency_key[:8].upper()}"
-            return ExecutionResult(
-                external_ref=ref,
-                summary=f"Linear ticket queued (demo): {title[:80]}",
-                raw={
-                    "identifier": ref,
-                    "url": None,
-                    "demo": True,
-                    "reason": "LINEAR_API_KEY not configured; demo-mode placeholder",
-                },
-            )
         raise AdapterError("LINEAR_API_KEY missing - add to .env to enable Linear writes")
 
     team_id = payload.get("team_id")
     description = payload.get("description", "")
     if not team_id or not title:
-        # Demo-mode: still succeed gracefully so the case finalizes.
-        if demo_mode:
-            ref = f"DEMO-LIN-{idempotency_key[:8].upper()}"
-            return ExecutionResult(
-                external_ref=ref,
-                summary=f"Linear ticket queued (demo): {title[:80]}",
-                raw={
-                    "identifier": ref,
-                    "url": None,
-                    "demo": True,
-                    "reason": "incomplete payload (missing team_id/title); demo-mode placeholder",
-                },
-            )
         raise AdapterError("linear.create_issue payload requires team_id + title")
 
     query = (

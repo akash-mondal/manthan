@@ -1,8 +1,9 @@
 """Async context manager that spawns `coral mcp-stdio` and yields a session.
 
-Use it around a run_case() call when you want the agent's coral_sql /
-coral_list_catalog / coral_describe_table to dispatch to the real Coral
-binary instead of the in-process mock.
+Wrap every run_case() call in this manager — the agent's coral_sql,
+coral_list_catalog, and coral_describe_table tools dispatch through the
+session it binds. Without an active session the tool handlers raise
+RuntimeError so misconfiguration fails loudly.
 
 Example:
 
@@ -24,8 +25,9 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# Shared contextvar - tools.py reads this to decide whether to dispatch
-# to the real Coral or to the in-process mock.
+# Shared contextvar - tools.py reads this to dispatch coral_sql /
+# coral_list_catalog / coral_describe_table through the live Coral
+# MCP session bound here.
 _ACTIVE_CORAL_SESSION: contextvars.ContextVar[ClientSession | None] = (
     contextvars.ContextVar("manthan_active_coral_session", default=None)
 )
