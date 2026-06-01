@@ -24,6 +24,7 @@ from datetime import datetime
 
 from .config import Config
 from .llm import chat
+from .pacer import judge_pre_conclude, judge_pre_round, snapshot_from_events
 from .prompts import REFLEXION, SYSTEM
 from .state import EventStore, events_to_messages
 from .tools import ToolExecutor, openai_schema, tool_by_name
@@ -120,8 +121,14 @@ async def run_case(
 
     tools_schema = openai_schema()
 
+    # Turn counter for the pacer. Distinct from budget.steps because
+    # reflexion calls also charge the budget but aren't main-loop turns;
+    # using budget.steps would over-trigger the pacer's round-budget rule.
+    turn_count = 0
+
     # The ReAct + Reflexion inner loop
     while True:
+        turn_count += 1
         if budget.exhausted():
             yield store.append(
                 trigger.case_id,
@@ -138,6 +145,41 @@ async def run_case(
                 kind="case_closed",
                 actor="system",
                 data={"reason": "budget", "detail": "safety rail hit"},
+            )
+            return
+
+        # 0. Round-level policy check. The pacer inspects accumulated
+        # state (tool calls so far, findings, queries that have already
+        # run) and may inject a nudge into the event log for the model
+        # to pick up next turn - or halt the case if we've blown the
+        # round budget without any findings.
+        snap = snapshot_from_events(
+            store.list_for_case(trigger.case_id),
+            trigger_text=trigger.text,
+            round_count=turn_count,
+        )
+        pace = judge_pre_round(snap)
+        if pace.kind in ("nudge", "wrap_up"):
+            yield store.append(
+                trigger.case_id,
+                kind="agent_thought",
+                actor="system",
+                data={"text": pace.message, "pacer_rule_id": pace.rule_id},
+            )
+            # nudge/wrap_up don't break the loop - they just land in the
+            # event log and the model sees them on its next turn.
+        elif pace.kind == "halt":
+            yield store.append(
+                trigger.case_id,
+                kind="agent_thought",
+                actor="system",
+                data={"text": pace.message, "pacer_rule_id": pace.rule_id},
+            )
+            yield store.append(
+                trigger.case_id,
+                kind="case_closed",
+                actor="system",
+                data={"reason": "pacer_halt", "detail": pace.reason},
             )
             return
 
@@ -270,6 +312,9 @@ async def run_case(
 
         # Check for terminal tools (ask_human / conclude) FIRST. These
         # don't go through the executor - the loop handles them directly.
+        # `pacer_intercepted_conclude` lets us bail out of the round
+        # without dispatching when the pacer rejects a conclude attempt.
+        pacer_intercepted_conclude = False
         for tc in tool_calls:
             tool = tool_by_name(tc.name)
             if tool is None:
@@ -302,6 +347,33 @@ async def run_case(
 
             if tc.name == "conclude":
                 args = tc.arguments
+
+                # Pre-conclude pacer gate. Money-mover invariants run
+                # here: e.g. refuse to finalize a non-zero refund if no
+                # finding contains the math that produced the amount.
+                # If the pacer nudges, we log the nudge and bail out
+                # of this round - the outer while-loop will re-prompt
+                # the model with the nudge visible in its event log.
+                pre_snap = snapshot_from_events(
+                    store.list_for_case(trigger.case_id),
+                    trigger_text=trigger.text,
+                    round_count=budget.steps,
+                )
+                pre_pace = judge_pre_conclude(pre_snap, args)
+                if pre_pace.kind == "nudge":
+                    yield store.append(
+                        trigger.case_id,
+                        kind="agent_thought",
+                        actor="system",
+                        data={
+                            "text": pre_pace.message,
+                            "pacer_rule_id": pre_pace.rule_id,
+                        },
+                    )
+                    # Flag so we skip the executor dispatch below.
+                    # The outer while-loop re-prompts with the nudge.
+                    pacer_intercepted_conclude = True
+                    break
 
                 # Defensive: clamp decision fields. Some models (observed
                 # in DeepSeek + Xiaomi MiMo) emit invalid action strings
@@ -390,6 +462,12 @@ async def run_case(
                     data={"reason": "concluded", "brief_seq": store.list_for_case(trigger.case_id)[-1].seq - 1},
                 )
                 return
+
+        # If the pacer rejected a conclude this round, skip dispatch
+        # entirely - we don't want to fake-acknowledge the conclude
+        # back to the model. The outer while loop re-prompts.
+        if pacer_intercepted_conclude:
+            continue
 
         # Non-terminal tool calls: dispatch through the executor.
         results = await executor.dispatch(tool_calls)
