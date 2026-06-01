@@ -122,6 +122,19 @@ class ActorWorker:
         org_id = row["org_id"]
         log = logger.getChild(str(action_id)[:8])
 
+        # Enrich the payload from the case context BEFORE firing. The
+        # agent occasionally drops required IDs (e.g. charge_id on
+        # stripe_refund, company_id on hubspot_note) when finalising the
+        # brief, which would otherwise reject as AdapterError. Pull the
+        # case's trigger_payload + customer_ref once and backfill any
+        # obvious gaps from there. Also threads the demo_v2 marker into
+        # customer_email so the outbound copy carries a banner that
+        # explains the seeded-customer linkage.
+        try:
+            payload = await self._enrich_payload(case_id, kind, payload)
+        except Exception as e:  # noqa: BLE001
+            log.warning("payload enrichment failed (continuing with raw payload): %s", e)
+
         # Wrap the whole adapter run in try/finally so the finalize
         # check ALWAYS runs - including on adapter rejection, unknown
         # kind, or unexpected exception. Previously the failure-return
@@ -227,6 +240,103 @@ class ActorWorker:
                 log.warning("finalize check failed: %s", e)
 
     # ───────── helpers ─────────
+
+    async def _enrich_payload(
+        self,
+        case_id: UUID,
+        kind: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Backfill obvious gaps in the agent's drafted payload from the
+        case context. Also injects the demo-v2 banner into outbound
+        customer emails so the user understands the seeded-customer
+        linkage when the case landed via the guided demo flow."""
+        async with get_pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT trigger_payload, customer_ref FROM cases WHERE id=$1",
+                case_id,
+            )
+        if row is None:
+            return payload
+        trig = row["trigger_payload"]
+        if isinstance(trig, str):
+            try:
+                trig = json.loads(trig)
+            except Exception:
+                trig = {}
+        elif not isinstance(trig, dict):
+            trig = {}
+        customer_ref = row["customer_ref"]
+
+        out = dict(payload)
+
+        if kind == "stripe_refund":
+            # Adapter accepts `charge` (canonical). Fall through any of
+            # the agent-emitted variants if the canonical one is empty.
+            if not out.get("charge"):
+                for k in (
+                    "charge_id",
+                    "duplicate_charge_id",
+                    "original_charge_id",
+                ):
+                    v = out.get(k) or trig.get(k)
+                    if v:
+                        out["charge"] = v
+                        break
+
+        elif kind == "hubspot_note":
+            if not out.get("company_id"):
+                cid = trig.get("hubspot_company_id") or trig.get("company_id")
+                if cid:
+                    out["company_id"] = cid
+                elif trig.get("demo_v2"):
+                    # In demo mode the seeded HubSpot company isn't
+                    # always pre-resolved; flag the action so the
+                    # adapter can soft-skip instead of red-FAILED.
+                    out["_demo_skip_if_missing"] = True
+
+        elif kind == "customer_email":
+            # Default `to` to the case's customer_ref if the agent
+            # forgot it (and customer_ref is a real email address).
+            if not out.get("to") and customer_ref and "@" in customer_ref:
+                out["to"] = customer_ref
+            # Demo banner: prepend a short explanation to body_text so
+            # the user receiving the email understands the case mentions
+            # a seeded customer (Maya Patel / hitakshi220) even though
+            # they're the demo runner.
+            if trig.get("demo_v2") and out.get("body_text"):
+                banner = (
+                    "[DEMO MODE]\n"
+                    "This is a real reply Manthan generated from a guided "
+                    "demo case in your inbox. To give the agent real billing "
+                    "records to investigate against, your demo email was "
+                    "matched to a seeded customer in our test environment - "
+                    "that's why the case below references "
+                    "\"Maya Patel Design\" / hitakshi220@gmail.com. The "
+                    "refund decision, the policy match, and the reasoning "
+                    "are all genuine; just running against demo data.\n\n"
+                    "-----\n\n"
+                )
+                out["body_text"] = banner + str(out["body_text"])
+                # If the agent also emitted body_html, prefix that too so
+                # the HTML render carries the same banner.
+                if out.get("body_html"):
+                    html_banner = (
+                        '<div style="background:#fff7d6;border-left:3px solid '
+                        '#d4a017;padding:10px 12px;margin-bottom:14px;'
+                        'font-size:13px;color:#5b4500;">'
+                        '<strong>Demo mode</strong> &mdash; This is a real '
+                        'reply Manthan generated from a guided demo case in '
+                        'your inbox. The case mentions "Maya Patel Design" '
+                        'and <code>hitakshi220@gmail.com</code> because we '
+                        'matched your demo email to a seeded customer so '
+                        'the agent had real billing records to investigate '
+                        'against. The refund + reasoning are genuine.'
+                        "</div>"
+                    )
+                    out["body_html"] = html_banner + str(out["body_html"])
+
+        return out
 
     async def _mark_failed(self, action_id: UUID, reason: str) -> None:
         async with get_pool().acquire() as conn:

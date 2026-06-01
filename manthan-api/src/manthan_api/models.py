@@ -114,6 +114,13 @@ class Case(BaseModel):
     # by the inbox cards; populated by the list endpoint, null elsewhere.
     card_summary: str | None = None
 
+    # True when this case was opened via the demo-v2 guided flow and the
+    # webhook grafted seeded Stripe/HubSpot IDs onto trigger_payload. The
+    # UI reads this to show a small "demo" annotation above the brief
+    # explaining why the case references Maya Patel Design / hitakshi220
+    # even though the operator is logged in with their own email.
+    is_demo_v2: bool = False
+
 
 class BriefSummary(BaseModel):
     """The latest `brief_drafted` event's important fields."""

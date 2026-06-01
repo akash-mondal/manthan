@@ -27,8 +27,16 @@ def refund(payload: dict[str, Any], idempotency_key: str) -> ExecutionResult:
       metadata (optional dict)
     """
     _client()
-    charge = payload.get("charge")
-    pi = payload.get("payment_intent")
+    # Accept `charge` (canonical) OR `charge_id` (what the agent's
+    # prompt teaches as the payload field name). Same for payment_intent.
+    # The Refund.create API expects the unsuffixed form; the alias keeps
+    # the adapter forgiving when the agent emits the *_id variant.
+    charge = (
+        payload.get("charge")
+        or payload.get("charge_id")
+        or payload.get("duplicate_charge_id")
+    )
+    pi = payload.get("payment_intent") or payload.get("payment_intent_id")
     if not charge and not pi:
         raise AdapterError("refund payload must contain charge or payment_intent")
 

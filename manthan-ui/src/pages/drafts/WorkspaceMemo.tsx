@@ -59,6 +59,16 @@ export interface MemoCaseData {
   policyMatched?: string | null;
   policyMode?: string | null;
   tldr: string;
+  /** True when this case opened via demo-v2 + the webhook grafted
+   *  seeded Stripe IDs onto the trigger so the agent had real billing
+   *  data to investigate against. When true, we show a small banner
+   *  above the brief explaining the Maya Patel / hitakshi220 reference
+   *  the user is otherwise going to find baffling. */
+  isDemoV2?: boolean;
+  /** The operator's own email - shown in the banner so the user can
+   *  see at a glance that the case + reply are routed to them, even
+   *  though the investigation references the seeded customer. */
+  loggedInEmail?: string;
 }
 
 export interface WorkspaceMemoProps {
@@ -507,6 +517,10 @@ function BriefCanvas({
           )}
         </div>
 
+        {caseData.isDemoV2 && (
+          <DemoV2Banner loggedInEmail={caseData.loggedInEmail} />
+        )}
+
         <div
           className="leading-[1.55] space-y-3"
           style={{
@@ -749,6 +763,65 @@ function BriefCanvas({
 // names get brand-colored, sentences break into paragraphs (block
 // mode only). Inline mode preserves a single line.
 // ──────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────
+// DemoV2Banner - shown above the brief when the case landed via the
+// guided autonomous-email demo. Explains why the case prose references
+// Maya Patel Design / hitakshi220@gmail.com instead of the operator's
+// own email - the inbound webhook grafted seeded Stripe IDs onto the
+// case so the agent had real billing records to investigate against.
+// ──────────────────────────────────────────────────────────────────────
+
+function DemoV2Banner({ loggedInEmail }: { loggedInEmail?: string }) {
+  return (
+    <div
+      style={{
+        background: "rgba(22,208,94,0.06)",
+        border: "1px solid rgba(22,208,94,0.30)",
+        borderLeft: "3px solid rgba(22,208,94,0.85)",
+        borderRadius: 4,
+        padding: "10px 14px",
+        marginBottom: 18,
+        fontSize: 12.5,
+        lineHeight: 1.55,
+        color: "var(--color-ink-muted)",
+        fontFamily: "Geist, ui-sans-serif, sans-serif",
+        maxWidth: "60ch",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 9.5,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+          color: "rgba(22,208,94,0.95)",
+          fontWeight: 600,
+          marginBottom: 4,
+        }}
+      >
+        Demo · why this case mentions Maya Patel
+      </div>
+      Manthan needs real billing records to investigate against. Your
+      demo email
+      {loggedInEmail ? (
+        <>
+          {" "}from <strong style={{ color: "var(--color-ink-strong)" }}>
+            {loggedInEmail}
+          </strong>{" "}
+        </>
+      ) : (
+        " "
+      )}
+      was matched to a seeded customer in the test environment —
+      "Maya Patel Design" / <code>hitakshi220@gmail.com</code> — so the
+      agent could pull actual Stripe charges + Notion policy + HubSpot
+      records to reason against. The refund decision, the policy match,
+      and the reply email all genuinely fire; the reply just lands back
+      in your own inbox instead of Maya's, since that's where you sent
+      the test from.
+    </div>
+  );
+}
 
 function BriefProse({
   text,

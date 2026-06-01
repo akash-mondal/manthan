@@ -454,6 +454,11 @@ function memoCaseFromApi(c: ApiCase): MemoCaseData {
     policyMatched: c.policy_match?.rule_name ?? null,
     policyMode: c.policy_match?.mode ?? null,
     tldr,
+    isDemoV2: c.is_demo_v2 === true,
+    // customer_ref on a demo-v2 case IS the operator's logged-in email
+    // (the inbound webhook stores the sender's address verbatim). We
+    // reuse it as the "this routed to YOU" string in the demo banner.
+    loggedInEmail: c.is_demo_v2 ? (c.customer_ref ?? undefined) : undefined,
   };
 }
 
