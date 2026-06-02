@@ -137,12 +137,16 @@ export default function Inbox() {
   const isEmpty = sorted !== null && sorted.length === 0;
 
   // Empty state takes the full viewport on its own - no PageHeader above
-  // (it would just duplicate the centered "Inbox zero." title), no outer
-  // scroll. The state IS the page.
+  // (it would just duplicate the centered "Inbox zero." title). On
+  // mobile the content can be taller than the viewport (sidebar drawer
+  // adds 44px top, hero + cards + trailing button stack to >700px on a
+  // 360px-wide phone) so we make the wrapper scrollable; on lg+ the
+  // content always fits so the wrapper just behaves as a full-height
+  // canvas.
   if (isEmpty) {
     return (
       <div
-        className="h-full w-full"
+        className="h-full w-full overflow-y-auto"
         style={{ background: "var(--color-bg)" }}
       >
         <InboxEmptyState />
@@ -1133,7 +1137,12 @@ function InboxEmptyState() {
 
   return (
     <div
-      className="h-full w-full flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-10 select-none"
+      // min-h-full + items-center + justify-center: when content fits
+      // we still get the centered hero layout we had before; when it
+      // doesn't fit (phones) the container grows and the parent's
+      // overflow-y-auto takes over so the user can scroll to all 3
+      // trigger cards instead of seeing only the first one.
+      className="min-h-full w-full flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-10 select-none"
       style={{
         maxWidth: 1240,
         margin: "0 auto",

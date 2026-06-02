@@ -212,17 +212,22 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
 
   return (
     <div
-      className="h-full w-full flex items-stretch px-6 py-6"
+      // Outer wrapper: card with border on desktop, full-bleed on
+      // mobile so the page can grow naturally and AppShell scrolls.
+      // The `min-h-full` keeps the card from collapsing when content
+      // is short (e.g. an empty closed-case view).
+      className="lg:h-full w-full flex items-stretch px-2 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6 min-h-full"
       style={{ background: "var(--color-bg)" }}
     >
       <div
-        className="flex flex-col flex-1 min-h-0"
+        className="flex flex-col flex-1 lg:min-h-0"
         style={{
           background: "var(--color-bg)",
           border: "1px solid var(--color-rule)",
           borderRadius: 6,
           color: "var(--color-ink-strong)",
-          overflow: "hidden",
+          // overflow: hidden on lg only; mobile lets content grow.
+          overflow: undefined,
           boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
         }}
       >
@@ -237,7 +242,7 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
           }
         />
 
-        <div className="relative flex-1 min-h-0">
+        <div className="relative flex-1 lg:min-h-0">
           <motion.div
             key={mode}
             initial={{ opacity: 0 }}
@@ -438,19 +443,31 @@ function BriefCanvas({
     // Below `lg` (1024px) we stack the postmortem on top and the
     // actions panel underneath - the fixed 2-column grid was crushing
     // both columns into unreadable narrow strips on phones. lg+ keeps
-    // the original side-by-side layout.
+    // the original side-by-side layout where each column owns its own
+    // scroll within a viewport-fixed grid; mobile lets the whole page
+    // scroll naturally inside AppShell's main overflow-y-auto.
+    //
+    // Height management diff:
+    //   - lg+: `h-full overflow-hidden` + per-column `overflow-y-auto`
+    //   - mobile: no height lock, no overflow rules - the page just
+    //     grows tall and the AppShell main column scrolls
+    // The earlier version applied the lg rules unconditionally which
+    // crushed the postmortem column to ~0px tall on phones, hiding
+    // the entire brief.
     <div
       className="
-        h-full
+        lg:h-full
         grid lg:overflow-hidden
         grid-cols-1 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]
-        grid-rows-[auto_auto] lg:grid-rows-[minmax(0,1fr)]
+        lg:grid-rows-[minmax(0,1fr)]
       "
     >
       {/* LEFT - postmortem.
             Padding: aggressive on desktop, tight on mobile so prose
-            doesn't have a 56px gutter eating half the viewport. */}
-      <div className="px-5 sm:px-8 lg:px-14 pt-6 lg:pt-12 pb-6 lg:pb-8 overflow-y-auto flex flex-col gap-7">
+            doesn't have a 56px gutter eating half the viewport.
+            `overflow-y-auto` only kicks in at lg+ where the column
+            has a bounded height; on mobile the column grows to fit. */}
+      <div className="px-5 sm:px-8 lg:px-14 pt-6 lg:pt-12 pb-6 lg:pb-8 lg:overflow-y-auto flex flex-col gap-7">
         <Eyebrow>Brief</Eyebrow>
 
         <h2
@@ -621,7 +638,7 @@ function BriefCanvas({
           {isClosed ? "Actions fired" : "Suggested actions"}
         </Eyebrow>
 
-        <ol className="mt-7 space-y-4 flex-1 min-h-0 overflow-y-auto">
+        <ol className="mt-7 space-y-4 flex-1 lg:min-h-0 lg:overflow-y-auto">
           {isClosed
             ? workspaceActions.map((wa, i) => (
                 <FiredActionRow

@@ -88,18 +88,21 @@ export default function InvestigationMemo() {
   const caseHeader = useMemo(() => deriveCaseHeader(events, id), [events, id]);
 
   return (
+    // Mobile: container grows to fit content, AppShell main scrolls.
+    // Desktop: viewport-locked card with internal column scrolls.
     <div
-      className="h-full w-full flex items-stretch px-6 py-6"
+      className="lg:h-full w-full flex items-stretch px-2 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6 min-h-full"
       style={{ background: "var(--color-bg)" }}
     >
       <div
-        className="flex flex-col flex-1 min-h-0"
+        className="flex flex-col flex-1 lg:min-h-0"
         style={{
           background: "var(--color-bg)",
           border: "1px solid var(--color-rule)",
           borderRadius: 6,
           color: "var(--color-ink-strong)",
-          overflow: "hidden",
+          // overflow:hidden on lg only; mobile lets the stack grow.
+          overflow: undefined,
           boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
         }}
       >
@@ -454,14 +457,9 @@ function Canvas({
   const headlineKey = currentSources.join("|") || currentSource || "_";
 
   return (
-    <div
-      className="h-full grid overflow-hidden"
-      style={{
-        gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1fr)",
-      }}
-    >
+    <div className="lg:h-full grid lg:overflow-hidden grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
       {/* LEFT - typographic statement, currently-asked source */}
-      <div className="px-14 pt-12 pb-8 flex flex-col">
+      <div className="px-5 sm:px-8 lg:px-14 pt-6 sm:pt-10 lg:pt-12 pb-6 lg:pb-8 flex flex-col">
         <Eyebrow accent={!isComplete}>
           {isComplete ? "Investigation complete" : "Investigating"}
         </Eyebrow>
@@ -620,14 +618,19 @@ function Canvas({
           "in flight" caveat so the operator knows these aren't yet
           claims-with-citations. */}
       <div
-        className="pt-12 pb-8 pl-11 pr-14 flex flex-col"
-        style={{ borderLeft: "1px solid var(--color-rule-soft)" }}
+        className="
+          pt-8 lg:pt-12 pb-6 lg:pb-8
+          px-5 sm:px-8 lg:pl-11 lg:pr-14
+          flex flex-col
+          border-t lg:border-t-0 lg:border-l
+        "
+        style={{ borderColor: "var(--color-rule-soft)" }}
       >
         <Eyebrow>
           {findings.length > 0 ? "Findings" : "Surfacing"}
         </Eyebrow>
 
-        <ol className="mt-7 space-y-5 flex-1 min-h-0 overflow-y-auto">
+        <ol className="mt-7 space-y-5 flex-1 lg:min-h-0 lg:overflow-y-auto">
           <AnimatePresence initial={false}>
             {findings.length > 0 ? (
               findings.map((f, i) => {
@@ -781,8 +784,8 @@ export function CoralCanvas({
   })();
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="px-14 pt-10 pb-5 flex items-baseline justify-between shrink-0">
+    <div className="lg:h-full flex flex-col lg:overflow-hidden">
+      <div className="px-5 sm:px-8 lg:px-14 pt-8 sm:pt-10 pb-5 flex items-baseline justify-between shrink-0 gap-3 flex-wrap">
         <div className="flex items-baseline gap-4">
           <Eyebrow accent={!isComplete}>
             {isComplete ? "Coral · trace" : "Coral · live"}
@@ -809,7 +812,7 @@ export function CoralCanvas({
         </span>
       </div>
 
-      <ol className="flex-1 min-h-0 overflow-y-auto px-14 pb-10 space-y-5">
+      <ol className="flex-1 lg:min-h-0 lg:overflow-y-auto px-5 sm:px-8 lg:px-14 pb-10 space-y-5">
         <AnimatePresence initial={false}>
           {steps.length === 0 ? (
             <motion.li

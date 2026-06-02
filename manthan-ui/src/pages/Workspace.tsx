@@ -687,7 +687,13 @@ export default function Workspace() {
   if (params.id && rawCase) {
     const status = rawCase.status;
     return (
-      <div className="h-[calc(100vh-3.5rem)]">
+      // Desktop: viewport-locked so the brief + actions columns can
+      // own their internal scroll. Mobile: let the workspace grow
+      // naturally so the user can scroll through the whole brief +
+      // actions stack inside AppShell's main overflow-y-auto. Without
+      // the conditional, the entire memo got crushed to viewport
+      // height on phones and the brief column rendered at ~0px tall.
+      <div className="lg:h-[calc(100vh-3.5rem)] min-h-full">
         {status === "investigating" ? (
           // InvestigationMemo reads :id from useParams and subscribes
           // to its own SSE stream - we don't need to thread anything
