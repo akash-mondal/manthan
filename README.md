@@ -32,14 +32,8 @@
 
 <p align="center">
   <a href="https://manthan.quest/demo.mp4">
-    <video src="https://manthan.quest/demo.mp4" controls muted playsinline preload="metadata" width="720" poster="docs/banner.png">
-      Inline video didn't render. <a href="https://manthan.quest/demo.mp4">Watch the 2:50 demo</a> or grab the <a href="https://github.com/akash-mondal/manthan/raw/main/manthan-ui/public/demo.mp4">source file (8 MB)</a>.
-    </video>
+    <img src="https://img.shields.io/badge/%E2%96%B6%EF%B8%8E_Watch_the_2:50_demo-16d05e?style=for-the-badge&labelColor=0a0c0a" alt="Watch the 2:50 demo">
   </a>
-</p>
-
-<p align="center">
-  <sub><em>Watch Manthan resolve a chargeback end-to-end · 2:50 · 720p · 8 MB</em></sub>
 </p>
 
 ## About Manthan
