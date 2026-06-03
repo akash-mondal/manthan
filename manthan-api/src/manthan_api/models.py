@@ -52,6 +52,7 @@ TriggerSurface = Literal[
     "stripe_webhook",
     "inbound_email",
     "slack_mention",
+    "slack_dm",
     "cron",
     "web_new",
     "api",
@@ -63,6 +64,11 @@ CaseType = Literal[
     "sla_credit",
     "failed_renewal",
     "invoice_dispute",
+    # Slack-originated cases that didn't hit the demo-v3 graft path
+    # (channel mismatch, non-member sender, etc.) get this generic type
+    # so the agent still investigates without us pretending it's a
+    # chargeback.
+    "slack_request",
     "other",
 ]
 
@@ -95,7 +101,11 @@ class Case(BaseModel):
     case_type: CaseType | None = None
     customer_ref: str | None = None
     amount_minor: int | None = None
-    currency: str = "usd"
+    # Real-world cases (esp. non-monetary Slack/email triggers) may have
+    # no currency yet - the agent fills it in once it identifies the
+    # charge. Was strict-str → 500 on the inbox endpoint whenever a case
+    # row had currency=NULL.
+    currency: str | None = None
     decision_action: DecisionAction | None = None
     decision_amount_minor: int | None = None
     decision_confidence: float | None = None

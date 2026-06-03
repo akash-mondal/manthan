@@ -52,6 +52,8 @@ class CaseTrigger(BaseModel):
         "intercom_ticket",
         "manual_web",
         "manual_slack",
+        "slack_mention",
+        "slack_dm",
         "inbound_email",
         "cron_proactive",
         "api",
