@@ -103,38 +103,13 @@ export function DemoV3SlackWizard({ loggedInEmail, onClose }: DemoV3WizardProps)
     };
   }, [state.step, state.loggedInEmail]);
 
-  // ── waiting-for-mention: poll check-slack-inbound until matched ──
-  useEffect(() => {
-    if (state.step !== "waiting-for-mention") return;
-    if (!state.loggedInEmail || !state.waitingStartedAt) return;
-    let aborted = false;
-    const tick = async () => {
-      if (aborted) return;
-      try {
-        const r = await checkSlackInbound(
-          state.loggedInEmail!,
-          state.waitingStartedAt!,
-        );
-        if (aborted) return;
-        if (r.matched && r.case_id) {
-          setState((p) => ({
-            ...p,
-            step: "case-opened",
-            caseId: r.case_id,
-            shortId: r.short_id,
-          }));
-        }
-      } catch {
-        /* transient */
-      }
-    };
-    void tick();
-    const id = window.setInterval(tick, POLL_INTERVAL_MS);
-    return () => {
-      aborted = true;
-      window.clearInterval(id);
-    };
-  }, [state.step, state.loggedInEmail, state.waitingStartedAt]);
+  // ── waiting-for-mention step removed. The user explicitly didn't want
+  //   a polling-progress-bar between "I've sent the mention" and the
+  //   case workspace - the in-Slack bot reply already has a "Watch
+  //   live in Manthan" deep-link button, and the inbox surfaces the
+  //   case via SSE the moment it lands. The onSentMention handler now
+  //   does a short inline one-shot lookup (~4s) and either advances
+  //   directly to case-opened or drops the user on /app to wait.
 
   // ── case-opened: navigate to /app/case/{id}, watch for resolved ──
   useEffect(() => {
@@ -272,16 +247,38 @@ export function DemoV3SlackWizard({ loggedInEmail, onClose }: DemoV3WizardProps)
             }
             setStep("verify-join");
           }}
-          onSentMention={() => {
-            setState((p) => ({
-              ...p,
-              step: "waiting-for-mention",
-              // Preserve the timestamp we stamped on send-mention entry
-              // (which is well before the user typed in Slack); only
-              // fall back to "60s ago" if for some reason it was missed
-              // so a just-posted mention still falls inside the window.
-              waitingStartedAt: p.waitingStartedAt ?? Date.now() - 60_000,
-            }));
+          onSentMention={async () => {
+            // Inline one-shot lookup so we never sit on a polling step.
+            // Try for ~4 seconds, then either advance to case-opened
+            // (if we matched a case) or close the wizard and drop the
+            // user on the inbox - the SSE-driven inbox surfaces the
+            // case as soon as it lands, and the bot's "Watch live in
+            // Manthan" thread button is the canonical entry anyway.
+            const since = state.waitingStartedAt ?? Date.now() - 60_000;
+            const deadline = Date.now() + 4000;
+            while (Date.now() < deadline) {
+              try {
+                const r = await checkSlackInbound(state.loggedInEmail!, since);
+                if (r.matched && r.case_id) {
+                  setState((p) => ({
+                    ...p,
+                    step: "case-opened",
+                    caseId: r.case_id,
+                    shortId: r.short_id,
+                  }));
+                  return;
+                }
+              } catch {
+                /* transient */
+              }
+              await new Promise((res) => window.setTimeout(res, 600));
+            }
+            // Nothing matched within the budget. Don't keep the user
+            // staring at the wizard; let the inbox/Slack thread carry
+            // them the rest of the way.
+            clearState();
+            onClose();
+            navigate("/app");
           }}
           onAbortWaiting={() =>
             setState((p) => ({ ...p, step: "send-mention", waitingStartedAt: null }))
@@ -469,14 +466,10 @@ function StepBody(props: {
         </>
       );
 
-    case "waiting-for-mention":
-      return (
-        <WaitingPanel
-          startedAt={state.waitingStartedAt ?? Date.now()}
-          channel={template?.channel ?? "#all-manthandemo"}
-          onAbort={props.onAbortWaiting}
-        />
-      );
+    // "waiting-for-mention" removed - the onSentMention handler does
+    // an inline one-shot lookup and either advances to case-opened
+    // directly or closes the wizard. Old localStorage states that
+    // still mention it fall through to the default case below.
 
     case "case-resolved":
       return (

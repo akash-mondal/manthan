@@ -614,10 +614,33 @@ export default function Workspace() {
   useEffect(() => {
     if (!params.id || !cases) return;
     const row = cases.find((c) => c.caseId === params.id);
-    if (!row) return;
+    if (!row) {
+      // Fallback: the URL points to a case the inbox list doesn't
+      // include yet (just landed via SSE race, navigated from the
+      // Slack thread's "Watch live" deep-link before the list refreshed,
+      // user pasted an old URL, etc). Fetch the case detail directly
+      // so rawCaseById populates and the InvestigationMemo renders -
+      // otherwise we sit on "Loading case…" forever.
+      let cancelled = false;
+      getCase(params.id)
+        .then((c) => {
+          if (cancelled) return;
+          setRawCaseById((prev) => ({ ...prev, [c.id]: c }));
+          setCases((prev) => {
+            if (prev && prev.some((r) => r.caseId === c.id)) return prev;
+            return [caseRowFromApi(c, meEmail), ...(prev ?? [])];
+          });
+        })
+        .catch(() => {
+          /* 404 / transient - leave Loading state, user can retry */
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     if (detailByNum[row.num]) return; // first-load cache
     refetchDetail();
-  }, [params.id, cases, detailByNum, refetchDetail]);
+  }, [params.id, cases, detailByNum, refetchDetail, meEmail]);
 
   // Live-event subscription drives auto-refresh on key milestones.
   const { events, isLive, isComplete } = useCaseEvents(params.id);

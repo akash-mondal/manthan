@@ -19,7 +19,6 @@ export type StepId =
   | "join-workspace"        // open the invite link, join ManthanDemo
   | "verify-join"           // poll check-slack-member until found
   | "send-mention"          // copy canonical mention text + send in #all-manthandemo
-  | "waiting-for-mention"   // 5-min poll, cancel disabled
   | "case-opened"           // nav to case workspace, watch agent
   | "case-resolved"         // outro
   | "done";
@@ -29,7 +28,6 @@ export const STEP_ORDER: StepId[] = [
   "join-workspace",
   "verify-join",
   "send-mention",
-  "waiting-for-mention",
   "case-opened",
   "case-resolved",
   "done",
@@ -45,7 +43,6 @@ export const CANCELLABLE_STEPS: ReadonlySet<StepId> = new Set([
 ]);
 
 export const NAV_LOCKED_STEPS: ReadonlySet<StepId> = new Set([
-  "waiting-for-mention",
   "case-opened",
 ]);
 
