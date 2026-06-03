@@ -21,6 +21,7 @@ import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from .config import Config
 from .llm import chat
@@ -483,6 +484,28 @@ async def run_case(
                             confidence=originating.arguments["confidence"],
                         )
                     )
+                    # Resolve the int citation indices into structured
+                    # {source, table, ref} dicts by looking up the
+                    # executor's evidence pool. The agent emits ints
+                    # (Evidence row indices, per types.Finding); the
+                    # downstream projector + brief renderer want a
+                    # source-pointable shape. Keeping `citations` as ints
+                    # preserves the Brief/Decision contract; the new
+                    # `citations_resolved` is what the brief card reads.
+                    raw_cites = originating.arguments["citations"] or []
+                    resolved_cites: list[dict[str, Any]] = []
+                    for idx in raw_cites:
+                        if not isinstance(idx, int):
+                            continue
+                        if 0 <= idx < len(executor.evidence):
+                            ev = executor.evidence[idx]
+                            resolved_cites.append({
+                                "idx": idx,
+                                "source": ev.source,
+                                "table": ev.table,
+                                "ref": ev.record_id,
+                                "field": None,
+                            })
                     yield store.append(
                         trigger.case_id,
                         kind="finding_recorded",
@@ -490,7 +513,8 @@ async def run_case(
                         data={
                             "idx": len(findings) - 1,
                             "text": originating.arguments["text"],
-                            "citations": originating.arguments["citations"],
+                            "citations": raw_cites,
+                            "citations_resolved": resolved_cites,
                             "confidence": originating.arguments["confidence"],
                         },
                     )

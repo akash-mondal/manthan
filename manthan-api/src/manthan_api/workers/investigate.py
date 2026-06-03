@@ -948,8 +948,15 @@ class InvestigateWorker:
         if agent_evt.kind == "finding_recorded" and isinstance(data, dict):
             text = data.get("text") or data.get("finding") or ""
             conf = data.get("confidence")
-            cites = data.get("citations") or []
-            if isinstance(cites, list):
+            # Prefer the resolved citation dicts the agent loop now emits
+            # (each with {source, table, ref, field, idx}). Fall back to the
+            # legacy `citations` field for events emitted before the loop
+            # was taught to resolve indices - older events stored raw int
+            # indices which never had enough info to render.
+            resolved = data.get("citations_resolved") or []
+            if not (isinstance(resolved, list) and resolved):
+                resolved = data.get("citations") or []
+            if isinstance(resolved, list):
                 norm_cites = [
                     {
                         "source": c.get("source", "manthan"),
@@ -957,7 +964,7 @@ class InvestigateWorker:
                         "ref": c.get("ref", ""),
                         "field": c.get("field"),
                     }
-                    for c in cites
+                    for c in resolved
                     if isinstance(c, dict)
                 ]
             else:
