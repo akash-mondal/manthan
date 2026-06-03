@@ -104,6 +104,80 @@ async def send_ack_email(
         )
 
 
+async def send_nudge_email(
+    *,
+    org_id: UUID,
+    customer_email: str,
+    customer_name: str,
+    subject_received: str,
+) -> None:
+    """Send the "I see your message but it's brief" reply when the
+    email-webhook's intent classifier judged the inbound as chat-shaped
+    rather than an investigation request. No case is opened; this is
+    purely conversational. Replies via Resend like any other ack -
+    just with copy that points the user at what Manthan actually does.
+    """
+    short_subject = (subject_received or "your message").strip()
+    if len(short_subject) > 60:
+        short_subject = short_subject[:57] + "…"
+    name = (customer_name or "").strip() or customer_email.split("@", 1)[0]
+    subj = f"Re: {short_subject}"
+    text_body = (
+        f"Hi {name},\n\n"
+        "Thanks for emailing! I'm Manthan, an autonomous billing "
+        "investigator. I resolve chargebacks, refund requests, failed "
+        "payments, and dispute responses by reading across every "
+        "connected system in one query and queueing the right actions "
+        "for approval.\n\n"
+        "Your message was a little brief - if you'd like me to "
+        "investigate, just reply with details about the dispute. "
+        "Something like:\n\n"
+        "  > I was charged twice for my Caldera Pro subscription on "
+        "May 22 - both charges are for $89. Please refund the "
+        "duplicate.\n\n"
+        "  > Please dispute charge ch_xxx for $4,500 - the service "
+        "wasn't delivered.\n\n"
+        "Reply with the customer's details (amount, charge id, what "
+        "happened) and I'll dig in across all your connected sources.\n\n"
+        "- Manthan"
+    )
+    html_body = (
+        '<div style="font-family:ui-sans-serif,system-ui,-apple-system,'
+        '\'Segoe UI\',Roboto,sans-serif;font-size:14.5px;line-height:1.55;'
+        'color:#1a1d20;max-width:560px;">'
+        f"<p>Hi {name},</p>"
+        "<p>Thanks for emailing! I'm <strong>Manthan</strong>, an "
+        "autonomous billing investigator. I resolve chargebacks, refund "
+        "requests, failed payments, and dispute responses by reading "
+        "across every connected system in one query and queueing the "
+        "right actions for approval.</p>"
+        "<p>Your message was a little brief - if you'd like me to "
+        "investigate, just reply with details about the dispute. "
+        "Something like:</p>"
+        '<blockquote style="border-left:3px solid #16d05e;background:'
+        '#f7faf7;padding:8px 12px;margin:8px 0;color:#3c4040;">'
+        "I was charged twice for my Caldera Pro subscription on May 22 - "
+        "both charges are for $89. Please refund the duplicate."
+        "</blockquote>"
+        '<blockquote style="border-left:3px solid #16d05e;background:'
+        '#f7faf7;padding:8px 12px;margin:8px 0;color:#3c4040;">'
+        "Please dispute charge ch_xxx for $4,500 - the service wasn't "
+        "delivered."
+        "</blockquote>"
+        "<p>Reply with the customer's details (amount, charge id, what "
+        "happened) and I'll dig in.</p>"
+        "<p>— Manthan</p>"
+        "</div>"
+    )
+    await _send_via_resend(
+        to=customer_email,
+        subject=subj,
+        html_body=html_body,
+        text_body=text_body,
+        tag="nudge",
+    )
+
+
 async def send_welcome_email(
     *,
     clerk_user_id: str,

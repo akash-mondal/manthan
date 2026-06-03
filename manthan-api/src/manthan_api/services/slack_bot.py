@@ -625,6 +625,132 @@ def build_brief_blocks(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Intent classification - decides whether a mention is a real
+# investigation request or a chat-shaped greeting / test ping. Used by
+# the events handler in api/slack.py to decide between opening a case
+# (and running the agent loop) vs posting a friendly nudge that points
+# the user at what Manthan can actually help with.
+# ──────────────────────────────────────────────────────────────────────
+
+
+_GREETING_TOKENS = {
+    "hi", "hello", "hey", "yo", "sup", "hola", "howdy",
+    "test", "testing", "ping", "pong", "ok", "okay", "thx", "thanks",
+    "?", "??", "???", "help", "hi!", "hey!", "hello!",
+}
+# Words that strongly suggest a real billing-investigation request.
+# Hitting any of these short-circuits the heuristic to "investigate"
+# even when the message is otherwise short.
+_INVESTIGATE_KEYWORDS = {
+    "chargeback", "refund", "refunded", "dispute", "disputed", "disputing",
+    "charged", "billed", "billing", "invoice", "subscription", "payment",
+    "ch_", "du_", "cus_", "pi_", "re_",  # stripe id prefixes
+    "vermillion", "aperture", "caldera",  # demo customers
+    "investigate", "look into", "check on", "resolve",
+}
+
+
+def is_chat_intent(text: str) -> bool:
+    """True when the mention/DM body reads like a greeting or test ping
+    rather than a real investigation request. The caller posts a nudge
+    instead of opening a case + spinning up the agent loop.
+
+    Rules (heuristic, intentionally generous toward 'investigate' to
+    avoid false-rejecting real cases):
+      1. Strip the bot mention prefix + whitespace.
+      2. If any investigation keyword OR a $ amount appears anywhere,
+         it's investigation - regardless of length.
+      3. If the cleaned text is <= 5 tokens AND every alpha token is in
+         the greeting set, it's chat.
+      4. If <= 2 tokens, it's chat.
+      5. Default: investigation.
+    """
+    cleaned = text or ""
+    # Strip leading bot mention "<@U123456>"
+    if cleaned.startswith("<@") and ">" in cleaned:
+        cleaned = cleaned.split(">", 1)[1]
+    cleaned = cleaned.strip().lower()
+    if not cleaned:
+        return True  # empty body -> chat
+    # Money pattern -> always investigate
+    if any(ch == "$" for ch in cleaned):
+        return False
+    # Investigation keywords -> always investigate
+    for kw in _INVESTIGATE_KEYWORDS:
+        if kw in cleaned:
+            return False
+    # Word-count based gating
+    tokens = [t for t in cleaned.replace("?", " ? ").split() if t]
+    if len(tokens) <= 2:
+        return True
+    if len(tokens) <= 5 and all(
+        (not t.isalpha()) or t in _GREETING_TOKENS for t in tokens
+    ):
+        return True
+    return False
+
+
+def build_nudge_card(
+    *,
+    requester_slack_id: str,
+    channel: str | None,
+) -> list[dict[str, Any]]:
+    """The Block Kit reply when the mention reads as chat, not a real
+    investigation request. Points the user at what Manthan actually
+    does + gives them a concrete example they can paste back."""
+    who = f"<@{requester_slack_id}>" if requester_slack_id else "you"
+    example = (
+        "@manthantest look into the $4,500 chargeback from Vermillion "
+        "Studios about a seat-count mismatch"
+    )
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": ":wave: Hi! I'm Manthan",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"{who} - I help resolve *billing disputes*: "
+                    "chargebacks, refunds, failed payments, and dispute "
+                    "responses. I read across every connected source "
+                    "in one query, draft a cited brief, and queue the "
+                    "right actions for approval."
+                ),
+            },
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "*Try something like:*\n"
+                    f"> `{example}`\n\n"
+                    "I'll pull threads across Stripe, HubSpot, "
+                    "Intercom, Datadog, Notion, Slack, and more - then "
+                    "post my recommendation back here."
+                ),
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "_What would you like me to investigate?_",
+                },
+            ],
+        },
+    ]
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Outbound: investigating card (replaces ":hourglass: On it" plain text)
 # ──────────────────────────────────────────────────────────────────────
 

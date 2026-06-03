@@ -181,10 +181,35 @@ async def _handle_event(org_id, event_id: str, event: dict[str, Any]) -> None:
                 return
             # Falls through if the thread isn't a known case (treat as new mention).
 
-        # 2. App mention or DM → open a new case.
+        # 2. App mention or DM → classify intent first.
         if event_type == "app_mention" or is_dm or (
             event_type == "message" and "<@" in text
         ):
+            # Intent gate: greetings / "test" pings / sub-threshold
+            # messages get a friendly nudge card pointing them at what
+            # Manthan actually does, instead of a generic
+            # "investigating SLK-..." card and a wasted agent loop.
+            # Real investigation requests (any $, customer name, dispute
+            # keywords, > 5 words) fall through to the case-open path.
+            if slack_bot.is_chat_intent(text):
+                try:
+                    from manthan_api.services.slack_bot import (
+                        _client,
+                        build_nudge_card,
+                    )
+                    nudge_blocks = build_nudge_card(
+                        requester_slack_id=user_id,
+                        channel=channel_id,
+                    )
+                    _client().chat_postMessage(
+                        channel=channel_id,
+                        thread_ts=event_ts if not is_dm else None,
+                        text="Hi! Tell me what to investigate.",
+                        blocks=nudge_blocks,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("slack nudge post failed: %s", e)
+                return  # skip case creation entirely
             case_id, short_id = await slack_bot.open_case_from_slack(
                 org_id=org_id,
                 text=text,

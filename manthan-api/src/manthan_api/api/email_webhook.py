@@ -242,6 +242,26 @@ async def receive_email(
                 "short_id": case_row["short_id"],
             }
 
+        # Intent gate before case creation. If the body reads like a
+        # greeting / test ping / sub-threshold message, send a friendly
+        # nudge reply pointing at what Manthan actually does and skip
+        # opening a case + running the agent loop. Real investigation
+        # emails (money mentioned, dispute keywords, > 8 words) fall
+        # through to the normal new-case path below.
+        if _is_chat_email(subject, text):
+            logger.info(
+                "email classified as chat - sending nudge reply (from=%s)",
+                from_addr,
+            )
+            background.add_task(
+                _send_nudge_email,
+                org_id=org_id,
+                from_addr=from_addr,
+                from_name=from_name,
+                subject_received=subject,
+            )
+            return {"received": True, "routed_as": "nudge"}
+
         # Otherwise open a new case.
         thread_id = uuid.uuid4()
         import secrets
@@ -503,3 +523,65 @@ def _maybe_demo_graft(
     ):
         return seeded_graft
     return None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Intent classifier + nudge reply for chat-shaped emails
+# ──────────────────────────────────────────────────────────────────────
+
+
+_EMAIL_INVESTIGATE_KEYWORDS = (
+    "chargeback", "refund", "refunded", "dispute", "disputed",
+    "charged", "billed", "billing", "invoice", "subscription", "payment",
+    "ch_", "du_", "cus_", "pi_", "re_",
+    "vermillion", "aperture", "caldera",
+    "look into", "investigate", "resolve", "filed", "claim", "complaint",
+    "twice", "duplicate", "double",
+)
+
+
+def _is_chat_email(subject: str, body: str) -> bool:
+    """True when the email reads like a greeting / test / off-topic
+    message instead of a billing investigation request. The webhook
+    sends a friendly nudge reply (no case opened, no agent loop) when
+    this returns True.
+
+    Generous toward 'investigate' to avoid false-rejecting real cases:
+    any $ amount or any investigation keyword in subject+body falls
+    through to the case-create path regardless of length.
+    """
+    blob = (f"{subject or ''}\n{body or ''}").strip().lower()
+    if not blob:
+        return True
+    if "$" in blob:
+        return False
+    for kw in _EMAIL_INVESTIGATE_KEYWORDS:
+        if kw in blob:
+            return False
+    # Word count - real refund requests are usually 25-100+ words
+    word_count = len(blob.split())
+    if word_count < 8:
+        return True
+    return False
+
+
+async def _send_nudge_email(
+    *,
+    org_id: Any,
+    from_addr: str,
+    from_name: str,
+    subject_received: str,
+) -> None:
+    """Send a friendly reply that points the user at what Manthan does
+    and gives them a concrete example they can paste back. Runs as a
+    background task so the webhook ACKs Resend in <3s."""
+    try:
+        from manthan_api.services.email_dispatcher import send_nudge_email
+        await send_nudge_email(
+            org_id=org_id,
+            customer_email=from_addr,
+            customer_name=from_name,
+            subject_received=subject_received,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("nudge email send failed for=%s: %s", from_addr, e)
