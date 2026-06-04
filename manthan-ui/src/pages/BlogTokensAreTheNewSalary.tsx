@@ -585,136 +585,116 @@ export default function BlogTokensAreTheNewSalary() {
             the receipts they are in the repo, file paths and all.
           </Para>
 
-          <H3>One Coral session per case, spawned as a stdio subprocess.</H3>
+          <H3>One conversation with Coral per case.</H3>
           <Para>
-            The Coral integration is sixty lines in{" "}
-            <code>agent/coral_session.py</code>. It spawns{" "}
-            <code>coral mcp-stdio</code> as a subprocess for the case,
-            yields an MCP ClientSession, binds it to a Python{" "}
-            <code>contextvars.ContextVar</code>, then resets the
-            contextvar when the case ends. The per-tool handlers in{" "}
-            <code>agent/tools.py</code> dispatch through that contextvar
-            instead of being passed the session as an argument. The
-            subprocess dies with the session. No pool. No warm-up cache.
-            No shared-session optimisation. The simplicity is the
-            feature.
+            Each case opens its own connection. The agent talks through
+            it for as long as the investigation runs, then we tear it
+            down. Nothing shared between cases. No connection pool. No
+            warm cache to invalidate. The choice is boring, the way
+            using one notebook per project is boring, and it pays back
+            the same way. Less state to reason about. Fewer bugs that
+            only happen at midnight. No accidental cross-contamination
+            of context between two customers' investigations that
+            happened to overlap in time.
           </Para>
 
-          <H3>Six tools. Three of them write. That is the entire agent surface.</H3>
+          <H3>The agent only knows SQL.</H3>
           <Para>
-            Read-only:{" "}
-            <code>coral_sql</code>, <code>coral_list_catalog</code>,{" "}
-            <code>coral_describe_table</code>. State-changing or
-            terminal: <code>record_finding</code>,{" "}
-            <code>ask_human</code>, <code>conclude</code>. There is no{" "}
-            <code>stripe_get_charge</code>, no{" "}
-            <code>hubspot_search_company</code>, no{" "}
-            <code>notion_fetch_page</code>. The agent reaches all thirty
-            connected sources through one call:{" "}
-            <code>coral_sql</code>. It learns Stripe, HubSpot, Notion,
-            Datadog as schemas in a catalog. The mental load on the
-            model is one query language, not thirty REST APIs.
+            We could have given the model a different tool for each
+            connected source. A Stripe tool. A HubSpot tool. A Notion
+            tool. Thirty tools, thirty mental models, thirty turns of
+            context for the agent to keep straight. We did not. The
+            agent gets one read surface: SQL. Stripe is a table.
+            HubSpot is a table. Notion pages are a table. The agent
+            learns one query language and queries thirty sources
+            through it. The token math is the same as the cognitive
+            math. Thirty surfaces means thirty times the load. One
+            surface means one.
           </Para>
 
           <H3>Discover, then query.</H3>
           <Para>
-            The catalog is not baked into the system prompt. The first
-            thing the agent does on a new case is{" "}
-            <code>coral_list_catalog()</code> to see which schemas are
-            present for that org's connections, then{" "}
-            <code>coral_describe_table()</code> only for tables whose
-            columns it does not already know. That is how we keep the
-            system prompt from carrying thirty source-schemas worth of
-            dead context every turn. The agent reads what it needs.
+            Most agents I have looked at bake the schema of every
+            connected source into the system prompt. Every turn pays
+            for that catalog whether the agent uses it or not. We do
+            not carry the catalog. The agent walks it on case start,
+            asks what is available for this specific customer's
+            connections, and goes from there. If a case does not need
+            Datadog, the agent never reads Datadog's shape. Most cases
+            do not need Datadog. We stopped paying for the ones that
+            do not.
           </Para>
 
-          <H3>Evidence wraps every read.</H3>
+          <H3>Every fact carries its source.</H3>
           <Para>
-            Each <code>coral_sql</code> call returns rows wrapped in an
-            Evidence object: source, table, record_id, fields, query,
-            retrieved_at. The Python handler parses the MCP JSON once,
-            normalises into rows + columns, and tags the Evidence with
-            which sources the SQL touched (one regex in tools.py finds{" "}
-            <code>schema.table</code> patterns). The LLM never sees the
-            raw row as prose. It sees a typed ToolResult whose data
-            payload includes an <code>evidence_indices</code> array
-            pointing into the Evidence pool. That pool is what citations
-            resolve against.
+            When the agent reads a row, that row is wrapped with where
+            it came from before the model ever sees it. The Stripe
+            customer record arrives stamped with "I came from
+            stripe.customers, record cus_X." The Notion policy arrives
+            stamped with "I came from notion.pages, page [uuid]." The
+            model never has to remember which Stripe charge it was. The
+            provenance is structural, not prose. When the agent writes
+            a finding, the finding cites the wrapper by index. The
+            brief on the other side resolves the index back to the
+            source and turns it into a clickable chip. One write,
+            multiple reads downstream, zero extra Coral queries to
+            assemble the final document.
           </Para>
 
-          <H3>Findings cite Evidence by index, resolved at emit time.</H3>
+          <H3>The model literally cannot emit a malformed tool call.</H3>
           <Para>
-            When the agent calls{" "}
-            <code>record_finding(citations=[1, 3, 5])</code>, the loop
-            in <code>agent/loop.py</code> resolves those indices to{" "}
-            <code>{`{source, table, record_id}`}</code> dicts inside the
-            same turn, using <code>executor.evidence[idx]</code>. The
-            brief PDF, the Slack card, and the case-detail UI all read
-            the resolved citations from the finding event. Three
-            downstream surfaces, zero additional Coral queries to
-            assemble the brief.
+            This sounds like a small thing. It is not. Most teams I
+            have talked to are quietly burning ten to twenty percent of
+            their token budget on retry-the-bad-JSON loops. The model
+            proposes a call, the shape is wrong, the system says try
+            again, the model re-reads the conversation, the model
+            proposes another call, on and on. We removed that failure
+            mode at the protocol level. The input shape of every tool
+            is constrained at token-generation time, so the malformed
+            call just cannot be produced. The turns we save go into
+            actual reasoning.
           </Para>
 
-          <H3>Tools are exposed with constrained decoding.</H3>
+          <H3>Every third step, the agent grades itself.</H3>
           <Para>
-            <code>_enforce_strict()</code> in tools.py walks every
-            Pydantic JSON schema and adds{" "}
-            <code>additionalProperties: false</code> to every nested
-            object, marks every property required, uses null unions for
-            optionals. The OpenRouter client carries the{" "}
-            <code>structured-outputs-2025-11-13</code> header. The model
-            literally cannot emit a malformed tool call. Sounds small.
-            Most teams I have talked to are still burning turns on
-            retry-bad-JSON loops. We just stopped paying for that.
+            The model pauses and asks itself a structured question.
+            Am I getting closer to a verdict, or am I drifting? Is
+            there a specific gap I should close? Did I find a
+            contradiction? Have I extracted everything from the row in
+            front of me, or am I padding queries to feel productive?
+            Have I run out of useful angles entirely? The last two are
+            the most expensive to miss. The default failure mode of an
+            agent investigating across multiple systems is to keep
+            asking new questions when the row in hand still has more
+            to say. We catch that, every third step, before the bill
+            does.
           </Para>
 
-          <H3>Reflexion every three steps, anti-padding.</H3>
+          <H3>The auto-fire gate is Python, not prompt.</H3>
           <Para>
-            Defined in <code>prompts.REFLEXION</code>. Every third ReAct
-            step the model classifies the run as one of CONVERGING /
-            GAP / CONTRADICTION / THIN_FINDINGS / SATURATED / STUCK. The
-            branch that saves the most tokens is THIN_FINDINGS:{" "}
-            <em>
-              "if you have a fat row but only 2 findings recorded, walk
-              the column groups and emit one Finding per group from the
-              row you already have. Do NOT issue a new coral_sql."
-            </em>{" "}
-            The agent's natural failure mode is shallow extraction and
-            over-querying to compensate. Reflexion catches it before
-            the bill does.
+            When the brief is ready the agent emits a typed decision:
+            action, amount, confidence. A small policy engine reads it
+            and decides which lane the case goes into. Fires
+            immediately. Waits for one click. Waits for two signers.
+            The model never has to reason about thresholds, never has
+            to argue with itself about whether a fifty-thousand-dollar
+            refund is too big to auto-approve. The decision is data.
+            The gate is code. Both are auditable, and neither one
+            costs a token to operate.
           </Para>
 
-          <H3>The HITL gate is a JSON DSL evaluated in Python.</H3>
+          <H3>The truth lives in the event log, not in the model's head.</H3>
           <Para>
-            <code>services/policy.py:evaluate_for_case()</code> pulls
-            enabled rules in priority order and evaluates conditions
-            against a flat context dict. Conditions are{" "}
-            <code>{`{"all": [...], "any": [...], "not": ...}`}</code>{" "}
-            with leaf clauses like{" "}
-            <code>
-              {`{"case.amount_minor": {"lte": 20000}}`}
-            </code>
-            . Pure Python. No LLM. The model emits a typed decision
-            payload at <code>conclude()</code>; the gate evaluates it;
-            the case routes to auto / one-click / two-person. The model
-            never burns tokens deciding whether a $50 case auto-fires
-            or a $50K case needs a second signer.
-          </Para>
-
-          <H3>The event log is the source of truth.</H3>
-          <Para>
-            This is the 12-Factor Agents pattern. The agent loop yields
-            Event objects from <code>run_case()</code>; the investigate
-            worker in{" "}
-            <code>manthan-api/workers/investigate.py</code> mirrors
-            every event into the Postgres <code>events</code> table,
-            then projects into <code>cases</code>,{" "}
-            <code>findings</code>, <code>actions</code>. Nothing about
-            case state is reconstructed by the LLM. The audit trail is
-            queryable in SQL by humans. The brief PDF is generated from
-            events. The Slack card is generated from events. A case can
-            be replayed by reading its event log without re-running the
-            agent.
+            Every meaningful thing the agent does is an event. Cases,
+            findings, actions are derived from events. When we want to
+            know what happened on a case, we read events, not the
+            model. When we want to render the brief in three different
+            places (PDF, Slack card, web view) they all read the same
+            events. The state is queryable in SQL. The audit trail is
+            real. A case can be replayed without re-running the agent.
+            This is the part that becomes obvious the moment you stop
+            thinking of the model as a database and start thinking of
+            it as a worker that produced events.
           </Para>
 
           <Para>
