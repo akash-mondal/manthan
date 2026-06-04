@@ -2169,6 +2169,7 @@ function Footer() {
     { label: "How it works", href: "#how" },
     { label: "Anatomy of a case", href: "#anatomy" },
     { label: "Pricing", href: "#pricing" },
+    { label: "Blog", href: "/blog" },
     { label: "Changelog", href: "/changelog" },
   ];
   const companyLinks: { label: string; href: string }[] = [

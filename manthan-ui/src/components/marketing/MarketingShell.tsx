@@ -127,6 +127,7 @@ export function MarketingShell({
         </div>
         <div className="flex items-center gap-5 text-sm">
           {[
+            { label: "Blog", to: "/blog" },
             { label: "Privacy", to: "/privacy" },
             { label: "Terms", to: "/terms" },
             { label: "DPA", to: "/dpa" },
