@@ -163,7 +163,7 @@ function Section1Hero() {
               className="rounded-md text-sm font-medium px-2 py-0.5"
               style={{ background: "#fff", color: "#000" }}
             >
-              New
+              Blog
             </span>
             <span
               className="text-sm font-medium"
