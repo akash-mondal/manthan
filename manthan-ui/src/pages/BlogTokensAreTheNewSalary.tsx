@@ -490,7 +490,7 @@ export default function BlogTokensAreTheNewSalary() {
           <Para>
             The path we took instead is built on{" "}
             <a
-              href="https://github.com/withcoral/coral"
+              href="https://withcoral.com"
               target="_blank"
               rel="noreferrer"
               style={{
@@ -499,13 +499,15 @@ export default function BlogTokensAreTheNewSalary() {
                 textUnderlineOffset: 3,
               }}
             >
-              Coral Protocol
+              Coral
             </a>
-            . The piece that matters: Coral exposes every connected source
-            through a single SQL-shaped MCP layer. Stripe is a table.
-            HubSpot is a table. Notion pages are a table. The agent does
-            not have to learn three vocabularies and remember which API
-            takes a <code>customer_id</code> and which takes an{" "}
+            . The piece that matters: Coral turns every connected source
+            into a SQL table and exposes the runtime over MCP, so any
+            agent that speaks MCP plugs in without us writing new tool
+            adapters per source. Stripe becomes a table. HubSpot becomes
+            a table. Notion pages become a table. The agent does not have
+            to learn three vocabularies and remember which API takes a{" "}
+            <code>customer_id</code> and which takes an{" "}
             <code>account.id</code>. It learns one query language.
           </Para>
 
@@ -529,24 +531,50 @@ export default function BlogTokensAreTheNewSalary() {
           <Para>
             The architectural part is a discipline. Agents communicate in
             structured queries and typed results. Tokens get spent on the
-            reasoning, not on the protocol. The Coral team published
-            their Anemoi reference implementation against GAIA last year
-            and beat the OWL baseline by nine points by specifically
-            cutting redundant token passing between planner and worker.
-            The benchmark number is interesting. The architectural
-            pattern matters more.
+            reasoning, not on the protocol. In April the Coral team
+            (James Audretsch and Andrea Ambu) published{" "}
+            <a
+              href="https://withcoral.com/blog/benchmarks"
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                color: "#C97B2A",
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              a benchmark
+            </a>{" "}
+            of 82 real-world AI tasks comparing Coral against direct
+            provider MCPs (Datadog, Sentry, Linear, Slack, GitHub) using
+            Claude Opus 4.6. On the complex tasks that look like
+            production agent work, Claude was 31 percent more accurate,
+            64 percent more token-efficient, 70 percent cheaper, and 55
+            percent faster with Coral than with the vendor MCPs.
           </Para>
 
           <Para>
-            You can see the same idea converging from a half-dozen other
-            places this year. Bijit Ghosh's November piece on Medium
-            framed it as "stop dumping every tool definition into the
-            agent's memory like a messy desk drawer." Apollo's GraphQL
-            MCP team titled their writeup "Every Token Counts." The
-            CodeAgents paper out of arxiv this summer proposed typed
-            variables and reusable subroutines as the unlock. The field
-            has decided. The next decade of agentic systems will be won
-            by the teams that stop treating tokens as free.
+            The example they walk through is one I have run myself: "What
+            label groups do we use to categorize issues?" The vendor-MCP
+            route takes 29 tool calls over 134 seconds because the agent
+            has to brute-force discovery, paginate labels by team, search
+            the docs, list issues to reverse-engineer the structure. The
+            Coral route is one query against{" "}
+            <code>linear.issue_labels WHERE is_group = true</code>, six
+            calls, 21 seconds. Same data. Same model. The architecture
+            decides the bill.
+          </Para>
+
+          <Para>
+            You can see the same idea converging from other places this
+            year. Bijit Ghosh's November piece on Medium framed it as
+            "stop dumping every tool definition into the agent's memory
+            like a messy desk drawer." Apollo's GraphQL MCP team titled
+            their writeup "Every Token Counts." The CodeAgents paper out
+            of arxiv this summer proposed typed variables and reusable
+            subroutines as the unlock. The field has decided. The next
+            decade of agentic systems will be won by the teams that stop
+            treating tokens as free.
           </Para>
 
           <Para>
