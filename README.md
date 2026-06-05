@@ -224,7 +224,7 @@ Visit **[http://localhost:5173](http://localhost:5173)**, sign in via Clerk, the
 
 **Backend** · [FastAPI](https://fastapi.tiangolo.com) + [asyncpg](https://github.com/MagicStack/asyncpg) · [PostgreSQL](https://www.postgresql.org) (cases, events, findings, actions) · 3 background workers (`investigate`, `actor`, `prettifier`) coordinated via `FOR UPDATE SKIP LOCKED`.
 
-**Agent** · `agent/` is a ~hundreds-of-LOC Python loop (no framework) over the [OpenAI-compat](https://platform.openai.com/docs/api-reference) client pointed at [OpenRouter](https://openrouter.ai). Tools: `coral_sql`, `coral_list_catalog`, `coral_describe_table`, `record_finding`, `draft_action`, `draft_brief`.
+**Agent** · `agent/` is a ~hundreds-of-LOC Python loop (no framework) over the [OpenAI-compat](https://platform.openai.com/docs/api-reference) client pointed at [OpenRouter](https://openrouter.ai). Tools: `coral_sql`, `coral_list_catalog`, `coral_describe_table` (read, via Coral MCP) and `record_finding`, `ask_human`, `conclude`, `amend_brief` (in-loop, no external side effects). See [`agent/README.md`](./agent/README.md) for the full tool surface + loop walkthrough.
 
 **Data plane** · [Coral](https://github.com/withcoral/coral) - Rust binary, MCP/stdio bridge, 11 SaaS schemas as Postgres SQL.
 
@@ -237,10 +237,7 @@ Visit **[http://localhost:5173](http://localhost:5173)**, sign in via Clerk, the
 
 ## Self-hosting
 
-Manthan ships as 1 API + 3 workers + a Postgres + a Vite static frontend + the Coral subprocess. Two paths:
-
-- **VPS** (single-box) - Caddy + cloud-init + a small setup script bring up the whole stack on one Ubuntu box. This is what runs at [manthan.quest](https://manthan.quest).
-- **Fly.io + Vercel** - see [`DEPLOY.md`](./DEPLOY.md) for the multi-app runbook: Fly for API + workers + Postgres, Vercel for the frontend, Resend inbound for `support@`.
+Manthan ships as 1 API + 3 workers + a Postgres + a Vite static frontend + the Coral subprocess. Single-box VPS deploy is the supported path - Caddy + cloud-init + a small setup script bring up the whole stack on one Ubuntu box. This is what runs at [manthan.quest](https://manthan.quest). Full walkthrough in [`DEPLOY.md`](./DEPLOY.md).
 
 ## Contributing
 
