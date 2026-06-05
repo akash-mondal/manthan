@@ -524,8 +524,8 @@ export default function BlogTokensAreTheNewSalary() {
           </Para>
 
           <PullQuote>
-            Most of what people say about Coral on Twitter sounds like an
-            MCP registry pitch and undersells the architectural part.
+            Most of what people say about Coral sounds like an MCP
+            registry pitch and undersells the architectural part.
           </PullQuote>
 
           <Para>
