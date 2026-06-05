@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://manthan.quest">
-    <img src="docs/banner.png" alt="Manthan - the operations layer for revenue disputes" />
+    <img src="https://manthan.quest/banner.png" alt="Manthan - the operations layer for revenue disputes" />
   </a>
 </p>
 
@@ -239,7 +239,7 @@ Visit **[http://localhost:5173](http://localhost:5173)**, sign in via Clerk, the
 
 Manthan ships as 1 API + 3 workers + a Postgres + a Vite static frontend + the Coral subprocess. Two paths:
 
-- **VPS** (single-box) - see [`infra/vps/`](./infra/vps) for the Caddy config, cloud-init, and setup script. This is what runs at [manthan.quest](https://manthan.quest).
+- **VPS** (single-box) - Caddy + cloud-init + a small setup script bring up the whole stack on one Ubuntu box. This is what runs at [manthan.quest](https://manthan.quest).
 - **Fly.io + Vercel** - see [`DEPLOY.md`](./DEPLOY.md) for the multi-app runbook: Fly for API + workers + Postgres, Vercel for the frontend, Resend inbound for `support@`.
 
 ## Contributing
