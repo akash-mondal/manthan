@@ -33,13 +33,13 @@ const LINES: {
 ];
 
 const SOCIALS: { label: string; href: string; handle: string }[] = [
-  { label: "X", href: "https://x.com/hitakshi_exe", handle: "@hitakshi_exe" },
+  { label: "X", href: "https://x.com/akshmnd", handle: "@akshmnd" },
   {
     label: "LinkedIn",
-    href: "https://www.linkedin.com/in/hitakshiaroraa/",
-    handle: "hitakshiaroraa",
+    href: "https://www.linkedin.com/in/akshmnd/",
+    handle: "akshmnd",
   },
-  { label: "GitHub", href: "https://github.com/hitakshiA", handle: "hitakshiA" },
+  { label: "GitHub", href: "https://github.com/akash-mondal", handle: "akash-mondal" },
 ];
 
 export default function Contact() {
