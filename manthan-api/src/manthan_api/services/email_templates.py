@@ -416,7 +416,7 @@ def render_welcome_email(
     first_name: str | None,
     email: str,
     demo_url: str,
-    founder_email: str = "akash@miny-labs.com",
+    founder_email: str = "hitakshi220@gmail.com",
 ) -> tuple[str, str]:
     """The MVP welcome email - fired on `user.created` from Clerk.
 
@@ -488,15 +488,15 @@ def render_welcome_email(
         _hairline(),
 
         # The ask - quiet but unambiguous. Note: this mailbox doesn't
-        # accept inbound; route them to the founder directly.
+        # accept inbound; route them to the founders directly.
         _editorial_eyebrow("If you want priority access"),
         _paragraph(
-            "When we ship v1 you&rsquo;ll get first pick - but I&rsquo;d "
-            "love to talk before then. Write me directly at "
+            "When we ship v1 you&rsquo;ll get first pick - but we&rsquo;d "
+            "love to talk before then. Write us directly at "
             f'<a href="mailto:{_e(founder_email)}" '
             f'style="color:{PALETTE["accent"]};text-decoration:underline;font-weight:500;">'
             f"{_e(founder_email)}</a>. "
-            "I read every one.",
+            "We read every one.",
             font_size=14.5,
         ),
 
@@ -512,8 +512,8 @@ def render_welcome_email(
         ),
 
         _founder_signoff(
-            name="Akash",
-            role="Founder, Manthan",
+            name="Hitakshi & Akash",
+            role="Founders, Manthan",
             email=founder_email,
         ),
     ])
