@@ -165,6 +165,34 @@ export default function WorkspaceMemo(props: WorkspaceMemoProps) {
     }
   }, [isCaseTerminal, state, cinematicDone]);
 
+  // Polling fallback while we're stuck on "Wrapping up…". The cinematic
+  // has finished, but the case row still says status='acting' because
+  // the actor hasn't yet flipped to 'resolved' + emitted case_closed.
+  // SSE is supposed to wake us up when case_closed lands, but if the
+  // stream dropped (idle reconnect, mobile network hiccup, long actor
+  // finalize) the operator sits at "Wrapping up…" indefinitely and has
+  // to hard-refresh. Poll the case detail every 1.5s while we're in
+  // the stuck condition; bail after ~25s. Each tick calls onActionsExecuted
+  // which goes through the parent's refetchDetail -> setRawCaseById
+  // pipeline, so the next render sees the new status and the useEffect
+  // above flips us to "fired".
+  useEffect(() => {
+    if (state !== "firing" || !cinematicDone || isCaseTerminal) return;
+    let cancelled = false;
+    let ticks = 0;
+    const MAX_TICKS = 16;          // 16 * 1.5s = 24s
+    const id = window.setInterval(() => {
+      if (cancelled) return;
+      ticks += 1;
+      onActionsExecuted?.();
+      if (ticks >= MAX_TICKS) window.clearInterval(id);
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [state, cinematicDone, isCaseTerminal, onActionsExecuted]);
+
   async function handleApprove() {
     if (state !== "awaiting") return;
     setState("firing");
