@@ -416,7 +416,7 @@ def render_welcome_email(
     first_name: str | None,
     email: str,
     demo_url: str,
-    founder_email: str = "hitakshi220@gmail.com",
+    founder_email: str = "akash@miny-labs.com",
 ) -> tuple[str, str]:
     """The MVP welcome email - fired on `user.created` from Clerk.
 
@@ -511,11 +511,10 @@ def render_welcome_email(
             font_size=13.5,
         ),
 
-        _founder_signoff(
-            name="Hitakshi & Akash",
-            role="Founders, Manthan",
-            email=founder_email,
-        ),
+        # No personal signoff - the body already carries the contact
+        # email in the "Write us directly at..." line. Keeping the
+        # closing tone-neutral so we don't have to maintain a name
+        # block that drifts when the team changes.
     ])
 
     html_body = _welcome_shell(
