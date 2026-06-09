@@ -1356,7 +1356,7 @@ function InboxEmptyState() {
         <YouTubeLightbox
           videoId={activeVideo.id}
           title={`${activeVideo.label} demo`}
-          ctaLabel="Walk me through it"
+          ctaLabel="Try it yourself"
           onCta={() => {
             const card = activeVideo.card;
             setActiveVideo(null);
