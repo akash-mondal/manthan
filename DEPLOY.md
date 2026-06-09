@@ -64,7 +64,7 @@ docker compose -f /opt/manthan/docker-compose.yml restart
 
 If your provider doesn't have a cloud-init field, SSH in and run:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Miny-Labs/manthan/main/deploy/vps/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/akash-mondal/manthan/main/deploy/vps/setup.sh | bash
 ```
 
 This is the same script the cloud-init runs. Idempotent, safe to

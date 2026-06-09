@@ -31,7 +31,7 @@ write_files:
       [Service]
       Type=oneshot
       RemainAfterExit=yes
-      ExecStart=/bin/bash -lc 'curl -fsSL https://raw.githubusercontent.com/Miny-Labs/manthan/main/deploy/vps/setup.sh | bash'
+      ExecStart=/bin/bash -lc 'curl -fsSL https://raw.githubusercontent.com/akash-mondal/manthan/main/deploy/vps/setup.sh | bash'
       StandardOutput=journal
       StandardError=journal
 

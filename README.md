@@ -24,10 +24,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Miny-Labs/manthan/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <a href="https://github.com/Miny-Labs/manthan/stargazers"><img src="https://img.shields.io/github/stars/Miny-Labs/manthan?style=flat&logo=github" alt="Stars"></a>
-  <a href="https://github.com/Miny-Labs/manthan/pulse"><img src="https://img.shields.io/github/commit-activity/m/Miny-Labs/manthan?style=flat&logo=github" alt="Commits per month"></a>
-  <a href="https://github.com/Miny-Labs/manthan/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
+  <a href="https://github.com/akash-mondal/manthan/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/akash-mondal/manthan/stargazers"><img src="https://img.shields.io/github/stars/akash-mondal/manthan?style=flat&logo=github" alt="Stars"></a>
+  <a href="https://github.com/akash-mondal/manthan/pulse"><img src="https://img.shields.io/github/commit-activity/m/akash-mondal/manthan?style=flat&logo=github" alt="Commits per month"></a>
+  <a href="https://github.com/akash-mondal/manthan/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
 </p>
 
 https://github.com/user-attachments/assets/afa2105c-3cc1-40e2-a799-6fcd2ee2f3f8
@@ -155,7 +155,7 @@ When an upstream rejects an action (Stripe `charge_disputed`, Slack `channel_not
 
 ### Setup
 ```sh
-git clone https://github.com/Miny-Labs/manthan
+git clone https://github.com/akash-mondal/manthan
 cd manthan
 
 # 1 · Environment - fill in OPENROUTER_API_KEY, CORAL_BINARY,

@@ -7,7 +7,7 @@
 # placeholder .env, opens the firewall, and runs `docker compose up -d`.
 #
 # Manual usage:
-#   curl -fsSL https://raw.githubusercontent.com/Miny-Labs/manthan/main/deploy/vps/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/akash-mondal/manthan/main/deploy/vps/setup.sh | bash
 #
 # After it finishes:
 #   ssh root@<your-vps-ip>
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO_URL="${MANTHAN_REPO_URL:-https://github.com/Miny-Labs/manthan.git}"
+REPO_URL="${MANTHAN_REPO_URL:-https://github.com/akash-mondal/manthan.git}"
 INSTALL_DIR="${MANTHAN_INSTALL_DIR:-/opt/manthan}"
 BRANCH="${MANTHAN_BRANCH:-main}"
 

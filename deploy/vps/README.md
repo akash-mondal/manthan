@@ -33,7 +33,7 @@ For VPS providers without cloud-init in the console, or if you prefer
 to watch the install in real time, SSH in as root and:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Miny-Labs/manthan/main/deploy/vps/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/akash-mondal/manthan/main/deploy/vps/setup.sh | bash
 ```
 
 The same `setup.sh` that `cloud-init.yaml` runs under the hood.
