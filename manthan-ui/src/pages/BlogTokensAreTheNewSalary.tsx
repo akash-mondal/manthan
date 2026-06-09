@@ -591,7 +591,7 @@ export default function BlogTokensAreTheNewSalary() {
           <Para>
             The code is open at{" "}
             <a
-              href="https://github.com/akash-mondal/manthan"
+              href="https://github.com/Miny-Labs/manthan"
               target="_blank"
               rel="noreferrer"
               style={{
@@ -600,7 +600,7 @@ export default function BlogTokensAreTheNewSalary() {
                 textUnderlineOffset: 3,
               }}
             >
-              github.com/akash-mondal/manthan
+              github.com/Miny-Labs/manthan
             </a>
             . The deployed product is{" "}
             <Link
@@ -813,7 +813,7 @@ export default function BlogTokensAreTheNewSalary() {
             </Link>
             . The code is at{" "}
             <a
-              href="https://github.com/akash-mondal/manthan"
+              href="https://github.com/Miny-Labs/manthan"
               target="_blank"
               rel="noreferrer"
               style={{
@@ -822,7 +822,7 @@ export default function BlogTokensAreTheNewSalary() {
                 textUnderlineOffset: 3,
               }}
             >
-              github.com/akash-mondal/manthan
+              github.com/Miny-Labs/manthan
             </a>
             . The dispute Manthan was built to handle is one of a hundred
             problems shaped like this. Pick yours. Use Coral. Earn the
