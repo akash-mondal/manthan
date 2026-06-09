@@ -17,7 +17,7 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Play, Plus, X } from "lucide-react";
 
 import {
   formatAge,
@@ -1146,6 +1146,12 @@ type TriggerCard = {
   //   demoV3 -> ?demo=v3 (Slack-mention flow, Vermillion scenario)
   demoV2?: boolean;
   demoV3?: boolean;
+  // Optional 11-character YouTube video ID for a pre-recorded ~3 minute
+  // walkthrough of this demo. Renders a small "Watch 3-min demo"
+  // affordance under the card; click opens a full-screen lightbox with
+  // the YouTube embed (autoplay on lightbox open). For operators who
+  // want to see the flow without triggering it themselves.
+  videoId?: string;
 };
 
 const TRIGGER_CARDS: TriggerCard[] = [
@@ -1155,6 +1161,7 @@ const TRIGGER_CARDS: TriggerCard[] = [
     sourceId: "resend",
     label: "Customer Email",
     demoV2: true,
+    videoId: "y5azWV6d4IQ",
   },
   {
     scenarioId: "vermillion",
@@ -1165,6 +1172,7 @@ const TRIGGER_CARDS: TriggerCard[] = [
     // clicking the card flips ?demo=v3 instead of firing the
     // synthetic vermillion scenario.
     demoV3: true,
+    videoId: "Qaj8r3tx5UM",
   },
 ];
 
@@ -1179,6 +1187,9 @@ function InboxEmptyState() {
     storyOverlay,
   } = useScenarioWithStory();
   const [, setParams] = useSearchParams();
+  const [activeVideo, setActiveVideo] = useState<
+    { id: string; label: string } | null
+  >(null);
 
   // Resolve the simplified card configs against the live scenario list.
   // Coming-soon, demo-v2 AND demo-v3 cards are kept regardless (they
@@ -1308,23 +1319,39 @@ function InboxEmptyState() {
           }}
         >
           {visible.map((card) => (
-            <BigTriggerCard
-              key={card.scenarioId}
-              scenarioId={card.scenarioId}
-              sourceId={card.sourceId}
-              label={card.label}
-              firing={firingId === card.scenarioId}
-              disabled={
-                firingId !== null && firingId !== card.scenarioId
-              }
-              comingSoon={card.comingSoon}
-              onFire={() => handleCardFire(card)}
-            />
+            <div key={card.scenarioId} className="flex flex-col items-stretch">
+              <BigTriggerCard
+                scenarioId={card.scenarioId}
+                sourceId={card.sourceId}
+                label={card.label}
+                firing={firingId === card.scenarioId}
+                disabled={
+                  firingId !== null && firingId !== card.scenarioId
+                }
+                comingSoon={card.comingSoon}
+                onFire={() => handleCardFire(card)}
+              />
+              {card.videoId && !card.comingSoon && (
+                <WatchDemoLink
+                  label={card.label}
+                  onClick={() =>
+                    setActiveVideo({ id: card.videoId!, label: card.label })
+                  }
+                />
+              )}
+            </div>
           ))}
         </div>
       )}
 
       {storyOverlay}
+      {activeVideo && (
+        <YouTubeLightbox
+          videoId={activeVideo.id}
+          title={`${activeVideo.label} demo`}
+          onClose={() => setActiveVideo(null)}
+        />
+      )}
 
       <style>{`
         @keyframes pulse-soft {
@@ -1562,3 +1589,161 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 // empty-inbox state is now the canonical entry point for demo v2.
 // AppShell's useDemoV2Active still listens for `?demo=v2` so the URL
 // param continues to work as a hidden entry during testing.)
+
+// ──────────────────────────────────────────────────────────────────────
+// WatchDemoLink + YouTubeLightbox - "watch the 3-min recording instead"
+// affordance on each trigger card. Operators who want to see the flow
+// without going through the guided wizard can click here and watch the
+// pre-recorded walkthrough in a full-screen lightbox.
+//
+// Behavior:
+//   - Small text-link below each BigTriggerCard (only when the card
+//     has a videoId set + isn't comingSoon).
+//   - Click opens YouTubeLightbox which mounts a YouTube embed at
+//     16:9, full-screen overlay with a dark backdrop.
+//   - YouTube iframe loads with ?autoplay=1 since the user just
+//     clicked "watch" - they expect the video to start.
+//   - Esc OR click-on-backdrop OR click the X closes the lightbox.
+// ──────────────────────────────────────────────────────────────────────
+
+function WatchDemoLink({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      aria-label={`Watch the 3 minute ${label} walkthrough`}
+      className="self-center mt-3 inline-flex items-center gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-line)]"
+      style={{
+        fontFamily: "Geist Mono, ui-monospace, monospace",
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: hover ? "var(--color-ink-strong)" : "var(--color-ink-muted)",
+        background: "transparent",
+        border: "none",
+        padding: "6px 10px",
+        borderRadius: 6,
+        cursor: "pointer",
+        transition: "color 180ms ease",
+      }}
+    >
+      <Play
+        size={11}
+        strokeWidth={2.2}
+        fill="currentColor"
+        style={{ transform: "translateY(0px)" }}
+      />
+      Watch the 3-min demo
+    </button>
+  );
+}
+
+function YouTubeLightbox({
+  videoId,
+  title,
+  onClose,
+}: {
+  videoId: string;
+  title: string;
+  onClose: () => void;
+}) {
+  // Esc + scroll-lock while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      onClick={onClose}
+      className="fixed inset-0 flex items-center justify-center px-4 py-12"
+      style={{
+        zIndex: 110,
+        background: "rgba(0,0,0,0.92)",
+        backdropFilter: "blur(8px)",
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 1040,
+          aspectRatio: "16 / 9",
+          background: "#000",
+          borderRadius: 12,
+          overflow: "hidden",
+          position: "relative",
+          boxShadow: "0 32px 80px rgba(0,0,0,0.55), 0 8px 18px rgba(0,0,0,0.40)",
+          border: "1px solid rgba(255,255,255,0.08)",
+        }}
+      >
+        <iframe
+          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+          title={title}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          style={{
+            width: "100%",
+            height: "100%",
+            border: 0,
+            display: "block",
+          }}
+        />
+      </motion.div>
+      {/* Close button - sits OUTSIDE the iframe wrapper so it stays
+          clickable on every viewport (iframes consume their own
+          pointer events). */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        aria-label="Close demo video"
+        className="absolute inline-flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-line)]"
+        style={{
+          top: 20,
+          right: 20,
+          width: 36,
+          height: 36,
+          borderRadius: 999,
+          background: "rgba(0,0,0,0.7)",
+          color: "#fff",
+          border: "1px solid rgba(255,255,255,0.18)",
+          cursor: "pointer",
+          backdropFilter: "blur(8px)",
+        }}
+      >
+        <X size={16} strokeWidth={2.2} />
+      </button>
+    </motion.div>
+  );
+}
