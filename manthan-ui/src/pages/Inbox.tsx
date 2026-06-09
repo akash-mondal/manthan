@@ -17,7 +17,7 @@
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Play, Plus, X } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 
 import {
   formatAge,
@@ -1188,7 +1188,7 @@ function InboxEmptyState() {
   } = useScenarioWithStory();
   const [, setParams] = useSearchParams();
   const [activeVideo, setActiveVideo] = useState<
-    { id: string; label: string } | null
+    { id: string; label: string; card: TriggerCard } | null
   >(null);
 
   // Resolve the simplified card configs against the live scenario list.
@@ -1319,27 +1319,34 @@ function InboxEmptyState() {
           }}
         >
           {visible.map((card) => (
-            <div key={card.scenarioId} className="flex flex-col items-stretch">
-              <BigTriggerCard
-                scenarioId={card.scenarioId}
-                sourceId={card.sourceId}
-                label={card.label}
-                firing={firingId === card.scenarioId}
-                disabled={
-                  firingId !== null && firingId !== card.scenarioId
+            <BigTriggerCard
+              key={card.scenarioId}
+              scenarioId={card.scenarioId}
+              sourceId={card.sourceId}
+              label={card.label}
+              firing={firingId === card.scenarioId}
+              disabled={
+                firingId !== null && firingId !== card.scenarioId
+              }
+              comingSoon={card.comingSoon}
+              // When the card has a recorded walkthrough, clicking the
+              // tile opens the video lightbox first - operators can
+              // watch the flow, then choose "Walk me through it" inside
+              // the lightbox to actually start the guided demo. Cards
+              // without a videoId (Stripe Chargeback) fire directly
+              // into the ScenarioStory + wizard as before.
+              onFire={() => {
+                if (card.videoId) {
+                  setActiveVideo({
+                    id: card.videoId,
+                    label: card.label,
+                    card,
+                  });
+                  return;
                 }
-                comingSoon={card.comingSoon}
-                onFire={() => handleCardFire(card)}
-              />
-              {card.videoId && !card.comingSoon && (
-                <WatchDemoLink
-                  label={card.label}
-                  onClick={() =>
-                    setActiveVideo({ id: card.videoId!, label: card.label })
-                  }
-                />
-              )}
-            </div>
+                handleCardFire(card);
+              }}
+            />
           ))}
         </div>
       )}
@@ -1349,6 +1356,12 @@ function InboxEmptyState() {
         <YouTubeLightbox
           videoId={activeVideo.id}
           title={`${activeVideo.label} demo`}
+          ctaLabel="Walk me through it"
+          onCta={() => {
+            const card = activeVideo.card;
+            setActiveVideo(null);
+            handleCardFire(card);
+          }}
           onClose={() => setActiveVideo(null)}
         />
       )}
@@ -1591,69 +1604,26 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 // param continues to work as a hidden entry during testing.)
 
 // ──────────────────────────────────────────────────────────────────────
-// WatchDemoLink + YouTubeLightbox - "watch the 3-min recording instead"
-// affordance on each trigger card. Operators who want to see the flow
-// without going through the guided wizard can click here and watch the
-// pre-recorded walkthrough in a full-screen lightbox.
-//
-// Behavior:
-//   - Small text-link below each BigTriggerCard (only when the card
-//     has a videoId set + isn't comingSoon).
-//   - Click opens YouTubeLightbox which mounts a YouTube embed at
-//     16:9, full-screen overlay with a dark backdrop.
-//   - YouTube iframe loads with ?autoplay=1 since the user just
-//     clicked "watch" - they expect the video to start.
-//   - Esc OR click-on-backdrop OR click the X closes the lightbox.
+// YouTubeLightbox - clicking a trigger card with a registered videoId
+// (Customer Email, Slack Thread) opens this. Pre-recorded 3-min
+// walkthrough plays in a full-screen embed. The "Walk me through it"
+// CTA below the player closes the lightbox and starts the actual
+// guided demo (ScenarioStory + wizard) via handleCardFire on the
+// caller side. Operators who just wanted to see the flow can Esc /
+// click-the-X / click-the-backdrop to dismiss and stay on the inbox.
 // ──────────────────────────────────────────────────────────────────────
-
-function WatchDemoLink({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
-  const [hover, setHover] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      aria-label={`Watch the 3 minute ${label} walkthrough`}
-      className="self-center mt-3 inline-flex items-center gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-line)]"
-      style={{
-        fontFamily: "Geist Mono, ui-monospace, monospace",
-        fontSize: 11,
-        letterSpacing: "0.16em",
-        textTransform: "uppercase",
-        color: hover ? "var(--color-ink-strong)" : "var(--color-ink-muted)",
-        background: "transparent",
-        border: "none",
-        padding: "6px 10px",
-        borderRadius: 6,
-        cursor: "pointer",
-        transition: "color 180ms ease",
-      }}
-    >
-      <Play
-        size={11}
-        strokeWidth={2.2}
-        fill="currentColor"
-        style={{ transform: "translateY(0px)" }}
-      />
-      Watch the 3-min demo
-    </button>
-  );
-}
 
 function YouTubeLightbox({
   videoId,
   title,
+  ctaLabel,
+  onCta,
   onClose,
 }: {
   videoId: string;
   title: string;
+  ctaLabel?: string;
+  onCta?: () => void;
   onClose: () => void;
 }) {
   // Esc + scroll-lock while open.
@@ -1677,7 +1647,7 @@ function YouTubeLightbox({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClose}
-      className="fixed inset-0 flex items-center justify-center px-4 py-12"
+      className="fixed inset-0 flex flex-col items-center justify-center px-4 py-12"
       style={{
         zIndex: 110,
         background: "rgba(0,0,0,0.92)",
@@ -1718,6 +1688,70 @@ function YouTubeLightbox({
           }}
         />
       </motion.div>
+
+      {/* CTA row below the video - "Walk me through it yourself" fires
+          the actual guided demo, "Close" dismisses and stays on the
+          inbox. Two-action footer so the operator who just wanted to
+          watch isn't railroaded into the wizard. */}
+      {onCta && ctaLabel && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.32, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          onClick={(e) => e.stopPropagation()}
+          className="mt-6 inline-flex items-center gap-4"
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCta();
+            }}
+            className="inline-flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-line)]"
+            style={{
+              fontFamily: "Geist, sans-serif",
+              fontSize: 14,
+              fontWeight: 500,
+              letterSpacing: "-0.002em",
+              background: "var(--color-accent)",
+              color: "#0a0a0a",
+              padding: "11px 22px",
+              borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
+              transition: "transform 160ms ease, opacity 160ms ease",
+              boxShadow: "0 10px 28px var(--color-accent-soft)",
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 14 }}>
+              ▶
+            </span>
+            {ctaLabel}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="inline-flex items-center outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-line)]"
+            style={{
+              fontFamily: "Geist Mono, ui-monospace, monospace",
+              fontSize: 11,
+              letterSpacing: "0.16em",
+              textTransform: "uppercase",
+              color: "rgba(255,255,255,0.55)",
+              background: "transparent",
+              border: "none",
+              padding: "6px 4px",
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </motion.div>
+      )}
       {/* Close button - sits OUTSIDE the iframe wrapper so it stays
           clickable on every viewport (iframes consume their own
           pointer events). */}
