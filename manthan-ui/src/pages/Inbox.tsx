@@ -1155,7 +1155,12 @@ type TriggerCard = {
 };
 
 const TRIGGER_CARDS: TriggerCard[] = [
-  { scenarioId: "aperture", sourceId: "stripe", label: "Stripe Chargeback" },
+  {
+    scenarioId: "aperture",
+    sourceId: "stripe",
+    label: "Stripe Chargeback",
+    videoId: "eSu1lUD_vbU",
+  },
   {
     scenarioId: "maya",
     sourceId: "resend",
